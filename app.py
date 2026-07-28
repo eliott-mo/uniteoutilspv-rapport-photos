@@ -91,25 +91,6 @@ def _decaler_offset(pas):
     _regler_offset(st.session_state["offset"] + pas)
 
 
-def texte_note(offset, nb_saisies_manuelles):
-    """Mention de calibration inscrite dans la carte produite.
-
-    Sans cette mention, un lecteur du fichier HTML ne peut pas savoir que les
-    directions ont été retouchées. Les directions saisies à la main sont figées
-    et échappent à l'offset : les passer sous silence laisserait croire que tous
-    les caps ont reçu la correction, ce qui est faux dès la première saisie.
-
-    Retourne "" quand aucune correction n'a été appliquée.
-    """
-    if abs(offset) <= 0.5:
-        return ""
-    note = f"Directions corrigées de {offset:+.0f}° (calibration de la boussole)."
-    if nb_saisies_manuelles:
-        note += (f" {nb_saisies_manuelles} direction(s) saisie(s) à la main, "
-                 f"non concernée(s).")
-    return note
-
-
 def position_peu_fiable(photo):
     """Vrai si l'appareil a lui-même annoncé une incertitude au-delà du seuil.
 
@@ -710,6 +691,9 @@ if corrections:
 for index, photo in enumerate(photos):
     photo["cap"] = corrections.get(index, appliquer_offset(photo["cap_brut"], offset))
     photo["commentaire"] = commentaires.get(index, "")
+    # Transmis à la carte HTML, qui refait ce calcul de son côté pour permettre
+    # de rejouer la calibration une fois les cônes visibles sur le satellite.
+    photo["cap_manuel"] = corrections.get(index)
 
 with st.expander("👁️ Vérifier visuellement une photo"):
     choix = st.selectbox(
@@ -747,10 +731,10 @@ poids_estime = len(photos) * {1024: 0.25, 1280: 0.40, 1600: 0.75}[largeur_max]
 st.caption(f"Poids estimé du fichier : environ **{poids_estime:.1f} Mo**.")
 
 if st.button("🗺️ Générer la carte", type="primary", use_container_width=True):
-    note = texte_note(offset, len(corrections))
-
+    # La mention de calibration n'est plus figée ici : la carte la recalcule
+    # elle-même, l'offset et les caps figés voyageant désormais avec les données.
     with st.spinner("Génération en cours…"):
-        html = construire_carte(photos, titre, largeur_max, qualite, note)
+        html = construire_carte(photos, titre, largeur_max, qualite, offset=offset)
 
     st.success("Carte générée.")
     nom_fichier = "".join(c if c.isalnum() or c in " -_" else "_" for c in titre).strip()
