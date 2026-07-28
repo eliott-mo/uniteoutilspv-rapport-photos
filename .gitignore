@@ -1,5 +1,6 @@
 ﻿__pycache__/
 *.pyc
 .streamlit/secrets.toml
-photos_test/
+Photos validation/
+Photos validation.zip
 *.html
