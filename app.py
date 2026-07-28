@@ -9,11 +9,11 @@ La position vient de l'EXIF ou, à défaut, du texte incrusté dans l'image lu p
 OCR ; la direction vient de l'EXIF ou, à défaut, du cône bleu de la vignette
 GPS Map Camera (voir lecture_photo.py pour les deux cascades).
 
-Trois niveaux de direction se superposent, du plus général au plus précis :
-  1. cap brut      : détecté automatiquement, jamais modifié ;
-  2. offset global : correction de calibration de la boussole du téléphone,
-                     appliquée à toutes les photos du lot ;
-  3. correction    : valeur saisie à la main pour une photo, qui prime sur tout.
+Cette application ne produit que des directions BRUTES, telles que détectées.
+Tout ajustement — calibration de la boussole du téléphone, correction d'une
+photo isolée — se fait ensuite dans la carte HTML, en mode édition : un décalage
+de boussole ne se juge qu'en voyant les cônes sur le fond satellite, en
+vérifiant s'ils pointent vers les bons éléments du paysage.
 
 Lancement en local :  streamlit run app.py
 """
@@ -32,7 +32,7 @@ from detection_cap import SEUIL_CONFIANCE
 from lecture_exif import SEUIL_PRECISION_M
 from lecture_photo import lire_photo
 from generation_html import construire_carte
-from apercu_boussole import boussole, legende_html
+from apercu_boussole import boussole
 
 EXTENSIONS_IMAGE = formats_images.EXTENSIONS_IMAGE
 
@@ -46,50 +46,12 @@ PRESETS_QUALITE = {
     "Haute qualité — zoom sur détails (~0,75 Mo/photo)":  (1600, 80),
 }
 
-# Directions de référence proposées dans l'assistant de calibration.
-ROSE_DES_VENTS = {
-    "Nord": 0, "Nord-Est": 45, "Est": 90, "Sud-Est": 135,
-    "Sud": 180, "Sud-Ouest": 225, "Ouest": 270, "Nord-Ouest": 315,
-}
-
 st.set_page_config(page_title="Carte photos de terrain", page_icon="📍", layout="wide")
 
 
 # --------------------------------------------------------------------------
-# Calculs d'angles
+# Lecture des directions
 # --------------------------------------------------------------------------
-
-def normaliser_ecart(angle):
-    """Ramène un écart d'angle dans l'intervalle [-180, +180]."""
-    return (angle + 180.0) % 360.0 - 180.0
-
-
-def appliquer_offset(cap, offset):
-    """Applique l'offset de calibration à un cap. Retourne None si cap est None."""
-    if cap is None:
-        return None
-    return (cap + offset) % 360.0
-
-
-def deduire_offset(cap_brut, cap_reel):
-    """Déduit l'offset à appliquer pour qu'un cap brut donné devienne le cap réel."""
-    return normaliser_ecart(cap_reel - cap_brut)
-
-
-def _regler_offset(valeur):
-    """Fixe l'offset de calibration.
-
-    Passer par un callback est indispensable : Streamlit interdit d'écrire dans
-    st.session_state["offset"] après la création du curseur qui porte cette clé.
-    Les callbacks, eux, s'exécutent avant le rechargement du script.
-    """
-    st.session_state["offset"] = normaliser_ecart(valeur)
-
-
-def _decaler_offset(pas):
-    """Ajoute un pas à l'offset courant (boutons de réglage fin)."""
-    _regler_offset(st.session_state["offset"] + pas)
-
 
 def position_peu_fiable(photo):
     """Vrai si l'appareil a lui-même annoncé une incertitude au-delà du seuil.
@@ -178,8 +140,8 @@ def analyser(chemins, barre_progression):
     """Lit la position et le cap de chaque photo (voir lecture_photo.lire_photo).
 
     Retourne (liste des photos exploitables, liste des photos écartées).
-    Le cap obtenu est stocké dans « cap_brut » et ne sera plus jamais modifié :
-    l'offset et les corrections manuelles sont appliqués par-dessus.
+    Le cap obtenu est stocké dans « cap_brut » et n'est plus jamais modifié :
+    calibration et corrections se font dans la carte HTML, par-dessus.
     """
     exploitables, ecartees = [], []
 
@@ -290,15 +252,11 @@ def traiter(fichiers_a_traiter, remplacer):
     photos.sort(key=lambda p: (p["date"] is None, p["date"], p["nom"]))
 
     if remplacer:
-        # Repartir d'une calibration neutre et sans saisie manuelle.
+        # Repartir sans aucune saisie du lot précédent.
         st.session_state["ecartees"] = ecartees
-        st.session_state["corrections"] = {}
         st.session_state["commentaires"] = {}
-        st.session_state["offset"] = 0.0
     else:
         st.session_state["ecartees"] = st.session_state["ecartees"] + ecartees
-        st.session_state["corrections"] = reporter_saisies(
-            anciennes, photos, st.session_state["corrections"])
         st.session_state["commentaires"] = reporter_saisies(
             anciennes, photos, st.session_state["commentaires"])
 
@@ -346,8 +304,9 @@ with st.expander("ℹ️ Mode d'emploi et limites", expanded=False):
    cône bleu, donne aussi la direction).
 2. Récupérer les photos sur l'ordinateur.
 3. Les déposer ci-dessous — **directement** (sélection multiple) ou dans un
-   **.zip**, au choix —, **calibrer la boussole si nécessaire**, vérifier les
-   directions, puis télécharger la carte.
+   **.zip**, au choix —, vérifier le tableau, puis télécharger la carte.
+4. Ouvrir la carte et cliquer sur ✏️ pour **ajuster les directions** : c'est là,
+   sur le fond satellite, qu'un décalage de boussole se voit et se corrige.
 
 **Formats acceptés**
 JPEG, PNG, WEBP, TIFF et **HEIC** (format par défaut des iPhone), ainsi que les
@@ -369,7 +328,8 @@ Une position hors de France métropolitaine est refusée par sécurité : mieux 
 
 **Limites à connaître**
 - La précision est celle de la boussole du téléphone : **± 10 à 20°**, et davantage
-  si le téléphone était mal calibré. D'où l'étape de calibration ci-dessous.
+  si le téléphone était mal calibré. Les directions affichées ici sont **brutes** :
+  elles se corrigent dans la carte, en mode édition.
 - Quand l'application photo le renseigne, l'**incertitude GPS annoncée par
   l'appareil** est reprise dans la colonne *Précision*. Au-delà de
   {SEUIL_PRECISION_M} m, la photo est signalée : la fixation GPS était dégradée et
@@ -397,9 +357,8 @@ if not ocr_position.tesseract_disponible():
 
 # État conservé d'une interaction à l'autre. Les photos déjà traitées y restent :
 # aucun dépôt ultérieur ne peut provoquer leur réanalyse.
-for cle, valeur_initiale in [("photos", []), ("ecartees", []), ("corrections", {}),
-                             ("commentaires", {}), ("offset", 0.0),
-                             ("version_deposoir", 0)]:
+for cle, valeur_initiale in [("photos", []), ("ecartees", []),
+                             ("commentaires", {}), ("version_deposoir", 0)]:
     st.session_state.setdefault(cle, valeur_initiale)
 
 # La version fait partie de la key : l'incrémenter après un traitement recrée un
@@ -443,9 +402,8 @@ if en_attente:
                               "quelles : elles ne sont pas réanalysées."):
             traiter(en_attente, remplacer=False)
         if droite.button("♻️ Remplacer le lot", use_container_width=True,
-                         help="Le lot précédent est oublié, calibration et "
-                              "saisies manuelles comprises. Seules les nouvelles "
-                              "photos sont traitées."):
+                         help="Le lot précédent est oublié, commentaires compris. "
+                              "Seules les nouvelles photos sont traitées."):
             traiter(en_attente, remplacer=True)
 
 if not photos:
@@ -497,123 +455,18 @@ if ecartees:
                      hide_index=True, use_container_width=True)
 
 # --------------------------------------------------------------------------
-# Calibration de la boussole
-# --------------------------------------------------------------------------
-
-st.subheader("🧭 Calibration de la boussole")
-st.caption(
-    "Si toutes les directions sont décalées du même angle, c'est que la boussole "
-    "du téléphone était mal calibrée. Réglez la correction ci-dessous en regardant "
-    "tourner le cône : il montre exactement ce qui apparaîtra sur la carte."
-)
-
-candidates = [i for i, p in enumerate(photos) if p["cap_brut"] is not None]
-
-if not candidates:
-    st.warning("Aucune direction n'a été détectée : la calibration est sans objet.")
-    st.session_state["offset"] = 0.0
-else:
-    index_temoin = st.selectbox(
-        "Photo témoin — choisissez-en une dont vous identifiez bien ce qu'elle regarde",
-        candidates,
-        format_func=lambda i: f"{i + 1}. {photos[i]['nom']}",
-        key="photo_temoin",
-    )
-    temoin = photos[index_temoin]
-
-    # Photo à gauche, aperçu ET réglages à droite : tout reste visible d'un seul
-    # coup d'œil, sans avoir à faire défiler la page entre les deux.
-    colonne_photo, colonne_reglage = st.columns([3, 2], gap="medium")
-    colonne_photo.image(apercu(temoin["chemin"]), use_container_width=True)
-
-    with colonne_reglage:
-        # Emplacements réservés : ils sont remplis plus bas, une fois l'offset
-        # connu, mais s'affichent bien au-dessus des réglages.
-        zone_boussole = st.empty()
-        zone_legende = st.empty()
-
-        onglet_curseur, onglet_deduction = st.tabs(
-            ["Régler au jugé", "Déduire d'une direction connue"]
-        )
-
-        with onglet_curseur:
-            st.slider(
-                "Correction (°)",
-                min_value=-180.0, max_value=180.0, step=1.0,
-                key="offset",
-                help="Positif = le cône tourne vers la droite (sens horaire). "
-                     "Négatif = vers la gauche.",
-            )
-            gauche, milieu, droite = st.columns(3)
-            gauche.button("↺ −5°", use_container_width=True,
-                          on_click=_decaler_offset, args=(-5.0,))
-            milieu.button("0", use_container_width=True,
-                          on_click=_regler_offset, args=(0.0,),
-                          help="Remettre la correction à zéro.")
-            droite.button("↻ +5°", use_container_width=True,
-                          on_click=_decaler_offset, args=(5.0,))
-
-        with onglet_deduction:
-            st.caption(
-                "Si vous savez vers quoi pointe la photo témoin (un plan d'eau, "
-                "une route, un pylône…), indiquez-le : la correction en est déduite."
-            )
-            mode = st.radio("Direction réelle", ["Point cardinal", "Angle précis"],
-                            horizontal=True, key="mode_temoin")
-            if mode == "Point cardinal":
-                nom_cardinal = st.selectbox("Elle regarde vers le…",
-                                            list(ROSE_DES_VENTS), key="cardinal_temoin")
-                cap_reel = float(ROSE_DES_VENTS[nom_cardinal])
-            else:
-                # Valeur de départ : la direction actuellement retenue, pour que
-                # la correction déduite parte de l'état courant et non de zéro.
-                cap_reel = float(st.number_input(
-                    "Cap réel (°)", min_value=0.0, max_value=360.0,
-                    value=float(appliquer_offset(temoin["cap_brut"],
-                                                 st.session_state["offset"])),
-                    step=1.0, key="cap_reel_temoin"))
-
-            offset_propose = deduire_offset(temoin["cap_brut"], cap_reel)
-            st.metric("Correction déduite", f"{offset_propose:+.0f}°")
-            st.button("Appliquer cette correction", use_container_width=True,
-                      on_click=_regler_offset, args=(offset_propose,))
-
-        st.caption(
-            "Le cône orange et la pastille rouge sont ceux de la carte finale. "
-            "Le cône gris rappelle la direction détectée avant correction."
-        )
-
-    # Remplissage des emplacements réservés, maintenant que l'offset est connu.
-    offset_courant = float(st.session_state["offset"])
-    cap_corrige = appliquer_offset(temoin["cap_brut"], offset_courant)
-    zone_boussole.image(boussole(temoin["cap_brut"], cap_corrige, taille=250))
-    zone_legende.html(legende_html(temoin["cap_brut"], cap_corrige, offset_courant))
-
-offset = float(st.session_state["offset"])
-if abs(offset) > 0.5:
-    st.info(f"Correction de **{offset:+.0f}°** appliquée à l'ensemble du lot. "
-            f"Les directions corrigées à la main dans le tableau ne sont pas affectées.")
-
-# --------------------------------------------------------------------------
-# Vérification et correction photo par photo
+# Vérification photo par photo
 # --------------------------------------------------------------------------
 
 st.subheader("Vérification des directions")
 st.caption(
-    "La colonne **Direction** est modifiable : corrigez-la si une photo est "
-    "décalée indépendamment des autres (0 = nord, 90 = est, 180 = sud, 270 = ouest). "
-    "Une valeur saisie ici est figée et ne bouge plus avec la calibration."
+    "Ce tableau est en lecture seule, hormis les commentaires : les directions "
+    "affichées sont celles détectées, sans retouche. Elles se calibrent et se "
+    "corrigent dans la carte, en mode édition — c'est là, sur le fond satellite, "
+    "qu'un décalage se juge."
 )
 
-corrections = st.session_state["corrections"]
 commentaires = st.session_state["commentaires"]
-
-# Valeurs proposées à l'affichage : correction manuelle si elle existe,
-# sinon cap brut décalé de l'offset global.
-caps_affiches = [
-    corrections.get(index, appliquer_offset(photo["cap_brut"], offset))
-    for index, photo in enumerate(photos)
-]
 
 tableau = pd.DataFrame([{
     "N°": index + 1,
@@ -622,9 +475,7 @@ tableau = pd.DataFrame([{
     "Position": f"{photo['lat']:.6f}, {photo['lon']:.6f}",
     "Source pos.": photo["source_position"],
     "Précision (m)": texte_precision(photo["precision_m"]),
-    "Détecté": photo["cap_brut"],
-    "Direction": caps_affiches[index],
-    "Corrigé": index in corrections,
+    "Direction": photo["cap_brut"],
     "Confiance": photo["confiance"],
     "Source cap": photo["source_cap"],
     "Commentaire": commentaires.get(index, ""),
@@ -635,7 +486,7 @@ tableau_corrige = st.data_editor(
     hide_index=True,
     use_container_width=True,
     disabled=["N°", "Fichier", "Date", "Position", "Source pos.", "Précision (m)",
-              "Détecté", "Corrigé", "Confiance", "Source cap"],
+              "Direction", "Confiance", "Source cap"],
     column_config={
         "Position": st.column_config.TextColumn(
             "Position", help="Latitude, longitude en degrés décimaux."),
@@ -648,14 +499,10 @@ tableau_corrige = st.data_editor(
                  "« — » = non renseignée par l'application photo, ce qui est le cas "
                  f"le plus fréquent. Au-delà de {SEUIL_PRECISION_M} m, la position "
                  "est signalée mais la photo reste placée."),
-        "Détecté": st.column_config.NumberColumn(
-            "Détecté (°)", format="%.0f",
-            help="Direction brute avant calibration. Non modifiable."),
         "Direction": st.column_config.NumberColumn(
-            "Direction (°)", min_value=0, max_value=360, step=1, format="%.0f",
-            help="Direction finale portée sur la carte."),
-        "Corrigé": st.column_config.CheckboxColumn(
-            "Manuel", help="Coché si la direction a été saisie à la main."),
+            "Direction (°)", format="%.0f",
+            help="Direction détectée, portée sur la carte. Ajustable ensuite "
+                 "dans l'éditeur HTML."),
         "Confiance": st.column_config.ProgressColumn(
             "Confiance", min_value=0, max_value=1, format="%.2f"),
         "Source cap": st.column_config.TextColumn(
@@ -667,33 +514,17 @@ tableau_corrige = st.data_editor(
     key="editeur",
 )
 
-# Une valeur qui diffère de celle proposée est considérée comme une saisie
-# manuelle : elle est mémorisée et ne suivra plus les variations de l'offset.
+# Seuls les commentaires sont saisissables ici.
 for index, ligne in tableau_corrige.iterrows():
-    saisie = ligne["Direction"]
-    saisie = None if pd.isna(saisie) else float(saisie) % 360.0
-    reference = caps_affiches[index]
-
-    if saisie is None and reference is None:
-        pass
-    elif saisie is None or reference is None or abs(normaliser_ecart(saisie - reference)) > 0.5:
-        corrections[index] = saisie
     commentaires[index] = ligne["Commentaire"] or ""
 
-if corrections:
-    gauche, droite = st.columns([3, 1])
-    gauche.caption(f"{len(corrections)} direction(s) saisie(s) à la main.")
-    if droite.button("Annuler les saisies manuelles", use_container_width=True):
-        st.session_state["corrections"] = {}
-        st.rerun()
-
-# Directions définitives portées sur la carte.
+# Directions portées sur la carte : les directions brutes, telles quelles.
+# La carte reçoit une calibration neutre et aucune correction, à elle de les
+# porter si le chargé de projet en pose.
 for index, photo in enumerate(photos):
-    photo["cap"] = corrections.get(index, appliquer_offset(photo["cap_brut"], offset))
+    photo["cap"] = photo["cap_brut"]
     photo["commentaire"] = commentaires.get(index, "")
-    # Transmis à la carte HTML, qui refait ce calcul de son côté pour permettre
-    # de rejouer la calibration une fois les cônes visibles sur le satellite.
-    photo["cap_manuel"] = corrections.get(index)
+    photo["cap_manuel"] = None
 
 with st.expander("👁️ Vérifier visuellement une photo"):
     choix = st.selectbox(
@@ -704,11 +535,11 @@ with st.expander("👁️ Vérifier visuellement une photo"):
     gauche, droite = st.columns([2, 1])
     gauche.image(apercu(photo_verifiee["chemin"]), use_container_width=True)
 
-    # Même aperçu que dans la calibration, appliqué à la direction définitive
-    # de cette photo (correction manuelle comprise).
+    # Sert à valider la DÉTECTION : le cône dessiné doit correspondre à celui de
+    # la vignette incrustée. Les deux caps passés sont identiques (aucune
+    # correction ici), l'aperçu ne montre donc qu'un seul cône.
     droite.image(boussole(photo_verifiee["cap_brut"], photo_verifiee["cap"], taille=210))
     droite.write(f"**Détecté :** {vers_rose(photo_verifiee['cap_brut'])}")
-    droite.write(f"**Sur la carte :** {vers_rose(photo_verifiee['cap'])}")
     droite.write(f"**Confiance :** {photo_verifiee['confiance']}")
     droite.write(f"**Source du cap :** {photo_verifiee['source_cap']}")
     droite.write(f"**Position :** {photo_verifiee['lat']:.6f}, {photo_verifiee['lon']:.6f} "
@@ -731,10 +562,8 @@ poids_estime = len(photos) * {1024: 0.25, 1280: 0.40, 1600: 0.75}[largeur_max]
 st.caption(f"Poids estimé du fichier : environ **{poids_estime:.1f} Mo**.")
 
 if st.button("🗺️ Générer la carte", type="primary", use_container_width=True):
-    # La mention de calibration n'est plus figée ici : la carte la recalcule
-    # elle-même, l'offset et les caps figés voyageant désormais avec les données.
     with st.spinner("Génération en cours…"):
-        html = construire_carte(photos, titre, largeur_max, qualite, offset=offset)
+        html = construire_carte(photos, titre, largeur_max, qualite)
 
     st.success("Carte générée.")
     nom_fichier = "".join(c if c.isalnum() or c in " -_" else "_" for c in titre).strip()
