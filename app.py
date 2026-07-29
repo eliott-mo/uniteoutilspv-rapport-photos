@@ -48,9 +48,9 @@ PRESETS_QUALITE = {
 }
 
 st.set_page_config(
-	page_title="Visite de site - Rapport photos", 
-	page_icon="📸",
-	layout="wide"
+    page_title="Visite de site - Rapport photos",
+    page_icon="📸",
+    layout="wide",
 )
 
 
