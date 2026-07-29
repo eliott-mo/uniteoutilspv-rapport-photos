@@ -18,6 +18,7 @@ vérifiant s'ils pointent vers les bons éléments du paysage.
 Lancement en local :  streamlit run app.py
 """
 
+import base64
 import os
 import tempfile
 import zipfile
@@ -46,7 +47,11 @@ PRESETS_QUALITE = {
     "Haute qualité — zoom sur détails (~0,75 Mo/photo)":  (1600, 80),
 }
 
-st.set_page_config(page_title="Carte photos de terrain", page_icon="📍", layout="wide")
+st.set_page_config(
+	page_title="Visite de site - Rapport photos", 
+	page_icon="📸",
+	layout="wide"
+)
 
 
 # --------------------------------------------------------------------------
@@ -290,11 +295,32 @@ def apercu(chemin, largeur_max=1200):
 # Interface
 # --------------------------------------------------------------------------
 
-st.title("📍 Carte des photos de terrain")
-st.caption(
-    "Transforme un lot de photos de terrain en carte interactive : "
-    "position, direction de prise de vue et photo agrandissable."
-)
+# ── Logo UNITe — chargé une fois pour le header
+_logo_b64 = None
+try:
+    _logo_path = os.path.join(os.path.dirname(__file__), "logo_unite.png")
+    with open(_logo_path, "rb") as _f:
+        _logo_b64 = base64.b64encode(_f.read()).decode()
+except FileNotFoundError:
+    pass
+
+# Header : titre à gauche, logo à droite
+_col_titre, _col_logo = st.columns([8, 1], vertical_alignment="center")
+with _col_titre:
+    st.title("📸 Visite de site - Rapport photos")
+    st.caption(
+        "Transforme un lot de photos de terrain en carte interactive : "
+        "position, direction de prise de vue et photo agrandissable."
+    )
+with _col_logo:
+    if _logo_b64:
+        st.markdown(
+            f'<div style="text-align:right;">'
+            f'<img src="data:image/png;base64,{_logo_b64}" '
+            f'style="height:85px;max-width:100%;"></div>',
+            unsafe_allow_html=True,
+        )
+st.divider()
 
 with st.expander("ℹ️ Mode d'emploi et limites", expanded=False):
     st.markdown(f"""
