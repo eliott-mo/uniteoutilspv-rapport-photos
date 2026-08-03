@@ -1,0 +1,10 @@
+# Configuration Streamlit — versionnée (les secrets, eux, vont dans
+# secrets.toml, ignoré par Git).
+
+[server]
+# Plafond par fichier déposé, en Mo. Second garde-fou mémoire, complémentaire du
+# contrôle de poids total du lot (SEUIL_LOT_MO dans app.py) : il bloque un
+# fichier aberrant avant même qu'il ne charge en RAM. 50 Mo couvre largement les
+# photos de terrain (téléphone ~3 Mo, drone ~10-20 Mo) ; à relever si un format
+# légitime venait à dépasser.
+maxUploadSize = 50

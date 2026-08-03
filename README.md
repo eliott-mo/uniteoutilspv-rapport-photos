@@ -11,7 +11,14 @@ chaque photo est positionnée avec sa direction de prise de vue.
    ou dans un **`.zip`**, les deux modes cohabitent. **Le dépôt ne traite rien** :
    on peut déposer en plusieurs fois, le compteur indique ce qui est en attente.
 3. Cliquer **« Traiter les photos »** pour lancer l'analyse.
-4. Calibrer la boussole si nécessaire, vérifier les directions, générer la carte.
+4. Vérifier les directions détectées, puis générer la carte.
+5. Ouvrir la carte et, en mode édition (**✏️**), **calibrer la boussole** sur le
+   fond satellite et ajuster les directions : c'est là qu'un décalage se juge.
+
+L'application ne produit que des directions **brutes**, telles que détectées.
+Toute retouche — calibration globale, correction d'une photo — se fait ensuite
+dans la carte HTML : un décalage de boussole ne se voit qu'en regardant les cônes
+sur le fond satellite (voir *Carte éditable*).
 
 ### Compléter un lot déjà traité
 
@@ -29,6 +36,51 @@ relancer. Retirer un fichier du déposoir le rend à nouveau traitable.
 Aucun octet d'image n'est conservé en mémoire : les photos sont écrites une fois
 dans un dossier temporaire et seul leur chemin est gardé. L'image de la carte
 n'est encodée qu'à la génération, quand la qualité choisie est connue.
+
+### Limite de poids d'un lot
+
+Décoder tout un lot d'un coup gonfle la RAM ; au-delà de ce que l'hébergement
+offre (~1 Go sur le plan gratuit Streamlit Cloud), l'application planterait et
+demanderait un redémarrage manuel. Deux garde-fous, tous deux en Mo — le poids,
+pas le nombre de photos, car 100 photos de téléphone (~3 Mo) pèsent moins en RAM
+que 30 photos de drone (~15 Mo) :
+
+- **Par lot** : `app.SEUIL_LOT_MO` (**350 Mo**). Au-delà, le dépôt affiche un
+  message et le bouton *Traiter* est désactivé — **avant tout décodage**, calculé
+  sur les octets déjà reçus (`.size` de chaque fichier). Un indicateur discret
+  (« Lot : 180 / 350 Mo ») laisse anticiper. La parade est de **découper** :
+  déposer une première partie, la traiter, puis ajouter le reste en mode *Ajouter*.
+  Le déposoir étant vidé après chaque traitement, seul le base64 réduit
+  (~0,4 Mo/photo) subsiste d'un lot à l'autre : le découpage contourne donc
+  réellement la limite mémoire.
+- **Par fichier** : `.streamlit/config.toml` → `maxUploadSize = 50`. Bloque un
+  fichier aberrant avant même son chargement en RAM. 50 Mo couvre large les photos
+  de terrain (téléphone ~3 Mo, drone ~10–20 Mo).
+
+`SEUIL_LOT_MO` est un point de départ à affiner empiriquement selon la RAM
+réellement disponible.
+
+### Compléter une carte existante
+
+Une carte HTML déjà produite peut être **rechargée pour y ajouter des photos**,
+sans rien perdre de ce qui y a été édité dans le navigateur (commentaires, noms,
+ordre, corbeille, calibration, directions figées). En tête d'interface, choisir
+*Compléter une carte existante* fait apparaître d'abord l'uploader HTML, puis
+celui des photos.
+
+Le bloc `#donnees-carte` fait foi : il est relu, enrichi des points des photos
+absentes, puis le HTML est réémis depuis cet objet. Les photos déjà présentes
+sont dédoublonnées sur le couple **(nom de fichier, date)** et ne sont ni
+retraitées ni ré-encodées — leur base64 est repris tel quel. La calibration de la
+carte s'applique aussi aux directions des nouvelles photos. Le **titre** est
+pré-rempli avec celui de la carte importée et reste modifiable (pour dater une
+nouvelle version) ; note, calibration, seuil de précision et fonds de carte sont
+conservés tels quels.
+
+Deux limites à connaître : une photo **renommée** dans l'éditeur a perdu son nom
+de fichier et sera réajoutée si on la redépose ; une carte réenregistrée depuis le
+seul navigateur (bouton 💾) garde son `zoom_max` d'origine tant qu'elle n'est pas
+repassée par l'application.
 
 ## Formats acceptés
 
@@ -99,22 +151,29 @@ Cas connu non couvert : cardinal placé avant les chiffres (`N 48° 26' 45"`).
 
 ## Calibration de la boussole
 
-Un aperçu en rose des vents montre en direct, pendant le réglage, le cône orange
-et la pastille rouge tels qu'ils apparaîtront sur la carte : le cône gris
-pointillé rappelle la direction détectée, l'arc fléché matérialise la rotation
-appliquée. Il n'est donc pas nécessaire de générer la carte pour juger du réglage.
-
-
 Un téléphone mal calibré décale toutes les directions du même angle (couramment
-30 à 40°). L'application propose deux façons de corriger l'ensemble du lot :
+30 à 40°). Cette correction ne se fait **pas** dans Streamlit mais **dans la carte
+HTML, en mode édition** : un décalage de boussole ne se juge qu'en voyant les
+cônes sur le fond satellite, en vérifiant s'ils pointent vers les bons éléments
+du paysage. L'application, elle, ne fournit que les directions brutes détectées.
 
-- **Photo repère** : choisir une photo dont on connaît la direction réelle et
-  indiquer celle-ci ; l'écart est déduit et appliqué à toutes les autres.
-- **Curseur manuel** : ajuster finement la correction.
+Dans l'éditeur de la carte, deux niveaux de réglage :
 
-Une direction saisie à la main dans le tableau est figée : elle ne suit plus les
-variations de la calibration. La correction appliquée est inscrite dans la carte
-produite, pour que le lecteur sache que les directions ont été retouchées.
+- **Calibration globale** — curseur, boutons ±5°, ou déduction depuis une photo
+  repère (indiquer sa direction réelle, ou viser sur la carte) : l'écart est
+  appliqué à tout le lot.
+- **Correction d'une photo** — direction saisie ou visée à la main. Une direction
+  ainsi figée ne suit plus la calibration globale.
+
+La règle du cap est unique et appliquée partout (Python comme JavaScript) :
+`cap_manuel` s'il existe, sinon `cap_brut + offset`, sinon pas de cône. La
+calibration appliquée est rappelée dans la carte, pour que le lecteur sache que
+les directions ont été retouchées.
+
+Le côté Streamlit conserve seulement un **aperçu en rose des vents** dans
+l'expander *Vérifier visuellement une photo* : il ne sert qu'à valider la
+**détection** (le cône dessiné doit correspondre à celui de la vignette
+incrustée), pas à régler quoi que ce soit.
 
 Pour éviter le problème à la source : sur le terrain, ouvrir Google Maps, toucher
 le point bleu, choisir *Étalonner la boussole* et dessiner un 8 en l'air.
@@ -122,7 +181,7 @@ le point bleu, choisir *Étalonner la boussole* et dessiner un 8 en l'air.
 Le fichier HTML produit est autonome (photos intégrées) : il s'ouvre par
 double-clic et peut être envoyé par mail.
 
-## Carte éditable (format version 2)
+## Carte éditable (format version 3)
 
 La carte s'ouvre en consultation. Le bouton **✏️** du panneau active le mode
 édition, où l'on peut, sans aucun outil ni serveur :
@@ -158,10 +217,12 @@ limite, sans distinction entre « original » et « déjà édité ». Vérifié
 cycles d'enregistrement successifs sans modification donnent des fichiers
 **identiques octet pour octet**.
 
-L'en-tête porte `<meta name="carte-photos-version" content="2">` et le bloc JSON
+L'en-tête porte `<meta name="carte-photos-version" content="3">` et le bloc JSON
 contient le même numéro de version. Le format de ce bloc est documenté en tête de
-`generation_html.py` — c'est lui qui fera foi pour le réimport (étape 3), pas la
-structure HTML.
+`generation_html.py` — c'est lui qui **fait foi** pour le réimport (voir
+*Compléter une carte existante*), pas la structure HTML. Une carte au format 2 est
+convertie à l'ouverture comme au réimport, sans changer d'apparence
+(`cap_brut = cap`, `cap_manuel = null`, `offset = 0`).
 
 ### Alerte de précision dans la carte
 
@@ -199,12 +260,16 @@ fichier, la lecture des positions incrustées échoue sur le Cloud.
 `opencv-python-headless` évite la dépendance système `libGL` qui fait échouer
 `opencv-python` sur le Cloud.
 
-Pour accepter des dépôts de plus de 200 Mo, créer `.streamlit/config.toml` :
+`.streamlit/config.toml` **abaisse** au contraire la limite d'envoi par défaut
+(200 Mo) à un plafond mémoire sûr — c'est un garde-fou, pas une extension :
 
 ```toml
 [server]
-maxUploadSize = 500
+maxUploadSize = 50
 ```
+
+La RAM du plan gratuit (~1 Go) est la vraie contrainte : voir *Limite de poids
+d'un lot* pour le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 
 ## Structure
 
@@ -217,7 +282,7 @@ maxUploadSize = 500
 | `ocr_position.py` | Lecture OCR de la position incrustée + formats de coordonnées |
 | `detection_cap.py` | Détection du cône bleu dans la vignette |
 | `apercu_boussole.py` | Rose des vents (image Pillow) affichée pendant la calibration |
-| `generation_html.py` | Construction de la carte Leaflet |
+| `generation_html.py` | Construction de la carte Leaflet, et relecture/complétion d'une carte existante (réimport) |
 
 ## Réglages utiles
 
@@ -240,4 +305,10 @@ maxUploadSize = 500
   en page (bascule édition, corbeille, redimensionnement) par `invalidateSize()`.
 - `lecture_exif.SEUIL_PRECISION_M` : incertitude GPS au-delà de laquelle une photo
   est signalée (elle reste placée).
+- `app.SEUIL_LOT_MO` : poids maximal d'un lot déposé en une fois (garde-fou
+  mémoire) ; complété par `maxUploadSize` dans `.streamlit/config.toml` pour le
+  plafond par fichier (voir *Limite de poids d'un lot*).
 - `generation_html.FONDS_DE_CARTE` : fonds disponibles (ortho IGN, Esri, plan IGN).
+  Le `zoom_max` de chaque fond est le dernier niveau réellement servi ; au-delà,
+  Leaflet agrandit la dernière tuile (flou, jamais gris). L'ortho IGN plafonne à
+  **19** (mesuré : 404 dès le niveau 20, partout).
