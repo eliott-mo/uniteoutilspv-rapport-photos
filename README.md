@@ -53,9 +53,20 @@ que 30 photos de drone (~15 Mo) :
   Le déposoir étant vidé après chaque traitement, seul le base64 réduit
   (~0,4 Mo/photo) subsiste d'un lot à l'autre : le découpage contourne donc
   réellement la limite mémoire.
-- **Par fichier** : `.streamlit/config.toml` → `maxUploadSize = 50`. Bloque un
-  fichier aberrant avant même son chargement en RAM. 50 Mo couvre large les photos
-  de terrain (téléphone ~3 Mo, drone ~10–20 Mo).
+- **Par fichier** : `.streamlit/config.toml` → `maxUploadSize = 350`, aligné sur
+  `SEUIL_LOT_MO`. Streamlit refuse un fichier plus lourd **côté navigateur**,
+  avant tout envoi : ses octets n'atteignent jamais la RAM du serveur. C'est
+  pourquoi on ne relève **pas** cette valeur pour « laisser monter » un gros ZIP —
+  le simple upload de ses octets bruts saturerait la mémoire. L'app acceptant des
+  ZIP (un site entier en un fichier), un plafond trop bas bloquerait des ZIP
+  légitimes ; 350 Mo est le compromis.
+
+Conséquence assumée : un **ZIP unique** au-delà de 350 Mo est refusé par le
+message générique de Streamlit (non personnalisable, puisqu'il agit avant le code
+de l'app). Une consigne affichée en permanence sous le déposoir explique la
+marche à suivre en amont : faire plusieurs ZIP plus petits, ou déposer les photos
+directement en plusieurs fois. Le message personnalisé « Lot trop volumineux »,
+lui, sert aux dépôts de **plusieurs fichiers** dont la somme dépasse le seuil.
 
 `SEUIL_LOT_MO` est un point de départ à affiner empiriquement selon la RAM
 réellement disponible.
@@ -260,16 +271,20 @@ fichier, la lecture des positions incrustées échoue sur le Cloud.
 `opencv-python-headless` évite la dépendance système `libGL` qui fait échouer
 `opencv-python` sur le Cloud.
 
-`.streamlit/config.toml` **abaisse** au contraire la limite d'envoi par défaut
-(200 Mo) à un plafond mémoire sûr — c'est un garde-fou, pas une extension :
+`.streamlit/config.toml` fixe la limite d'envoi par fichier à un plafond
+**aligné sur la RAM**, au lieu des 200 Mo par défaut :
 
 ```toml
 [server]
-maxUploadSize = 50
+maxUploadSize = 350
 ```
 
-La RAM du plan gratuit (~1 Go) est la vraie contrainte : voir *Limite de poids
-d'un lot* pour le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
+Ce n'est ni une simple extension ni une réduction, mais un plafond calé sur ce
+que la mémoire (~1 Go, plan gratuit) peut encaisser : assez haut pour laisser
+passer un ZIP de site réaliste (200 Mo aurait bloqué des ZIP légitimes), assez
+bas pour qu'un fichier surdimensionné soit refusé côté navigateur avant de
+saturer la RAM. Voir *Limite de poids d'un lot* pour le raisonnement complet et
+le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 
 ## Structure
 

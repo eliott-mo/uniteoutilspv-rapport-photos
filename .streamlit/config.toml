@@ -2,9 +2,17 @@
 # secrets.toml, ignoré par Git).
 
 [server]
-# Plafond par fichier déposé, en Mo. Second garde-fou mémoire, complémentaire du
-# contrôle de poids total du lot (SEUIL_LOT_MO dans app.py) : il bloque un
-# fichier aberrant avant même qu'il ne charge en RAM. 50 Mo couvre largement les
-# photos de terrain (téléphone ~3 Mo, drone ~10-20 Mo) ; à relever si un format
-# légitime venait à dépasser.
-maxUploadSize = 50
+# Plafond par fichier déposé, en Mo. Aligné sur SEUIL_LOT_MO (app.py) : c'est la
+# quantité qu'un dépôt peut représenter sans faire dépasser la RAM (~1 Go sur le
+# plan gratuit Streamlit Cloud).
+#
+# Streamlit refuse un fichier plus lourd CÔTÉ NAVIGATEUR, avant tout envoi : les
+# octets d'un ZIP surdimensionné n'atteignent donc jamais la RAM du serveur. On
+# ne veut surtout pas relever cette valeur pour « laisser monter » un gros ZIP :
+# le simple upload de ses octets bruts suffirait à saturer la mémoire, avant même
+# tout décodage. Un ZIP trop volumineux doit être refusé, pas mis en RAM.
+#
+# L'app accepte des ZIP (un site entier en un fichier) : 50 Mo aurait bloqué des
+# ZIP légitimes. 350 Mo laisse passer un dépôt raisonnable tout en restant sous
+# la limite mémoire.
+maxUploadSize = 350
