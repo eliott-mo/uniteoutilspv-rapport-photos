@@ -7,10 +7,12 @@ Seuls le fond de carte et la bibliothèque Leaflet sont chargés depuis Internet
 
 CARTE ÉDITABLE (version 3)
 --------------------------
-La page s'ouvre en consultation. Un bouton ✏️ bascule en mode édition, où le
-chargé de projet peut renommer les points, les commenter, les réordonner, les
-masquer, changer le titre, **calibrer la boussole et corriger les directions**,
-puis réenregistrer un fichier HTML complet.
+La page s'ouvre en consultation. Le bouton ✏️ en haut bascule en mode édition ;
+le crayon ✎ présent sur chaque photo (liste et bulle) y bascule aussi, en
+ouvrant directement la fiche de cette photo — sans passer d'abord par le bouton
+principal. En édition, le chargé de projet peut renommer les points, les
+commenter, les réordonner, les masquer, changer le titre, **calibrer la boussole
+et corriger les directions**, puis réenregistrer un fichier HTML complet.
 
 La calibration se fait ici plutôt que dans l'application : un décalage de
 boussole ne se juge qu'en voyant les cônes sur le fond satellite, en vérifiant
@@ -493,10 +495,12 @@ _GABARIT = r"""<!DOCTYPE html>
   .popup-titre { font-weight:600; font-size:12px; margin:6px 0 2px; }
   .popup-meta { font-size:11px; color:#555; }
   .popup-commentaire { font-size:11px; color:#1e2a38; font-style:italic; margin-top:4px; }
-  /* Actions de la bulle : présentes dans le HTML de toute bulle, révélées par le
-     seul CSS quand on passe en édition (les bulles ne sont pas reconstruites). */
-  .popup-actions { display:none; }
-  body.edition .popup-actions { display:flex; gap:6px; margin-top:6px; justify-content:flex-end; }
+  /* Actions de la bulle : présentes dans le HTML de toute bulle (les bulles ne
+     sont pas reconstruites). Le crayon d'édition est proposé en permanence ; la
+     corbeille, elle, n'apparaît qu'en mode édition. */
+  .popup-actions { display:flex; gap:6px; margin-top:6px; justify-content:flex-end; }
+  .popup-actions button[data-action="masquer"] { display:none; }
+  body.edition .popup-actions button[data-action="masquer"] { display:inline-block; }
   .popup-actions button { background:#e7edf3; color:#1e2a38; border:1px solid #c3ced9;
                           border-radius:3px; cursor:pointer; font-size:12px; padding:2px 8px;
                           line-height:1.4; font-family:inherit; }
@@ -511,9 +515,24 @@ _GABARIT = r"""<!DOCTYPE html>
   #btn-mode { background:#2c3e50; color:#e8eef4; border:1px solid #3d556e; border-radius:4px;
               cursor:pointer; font-size:14px; padding:4px 8px; line-height:1.2; }
   #btn-mode:hover { background:#3a5570; }
-  #barre-edition, #corbeille, .outils { display:none; }
+  /* Rappel de sauvegarde : masqué tant que rien n'a changé, révélé par .actif dès
+     la première modification. Visible dans les deux modes — c'est justement en
+     consultation, quand la barre d'édition a disparu, qu'il est le plus utile. */
+  #rappel-sauvegarde { display:none; width:100%; text-align:left; cursor:pointer;
+                       padding:8px 12px; border:none; border-bottom:1px solid #7a4f00;
+                       background:#8a5a00; color:#ffe9c2; font-family:inherit;
+                       font-size:12px; font-weight:600; line-height:1.4; }
+  #rappel-sauvegarde.actif { display:block; }
+  #rappel-sauvegarde:hover { background:#a06a00; }
+  #barre-edition, #corbeille { display:none; }
   body.edition #barre-edition { display:block; }
-  body.edition .outils { display:flex; }
+  /* Le crayon d'édition d'une photo est toujours visible, pour entrer en édition
+     directement dessus ; réordonner (↑ ↓) et corbeille (🗑) relèvent du mode
+     édition. */
+  .outils button[data-action="monter"],
+  .outils button[data-action="descendre"],
+  .outils button[data-action="masquer"] { display:none; }
+  body.edition .outils button { display:block; }
   #barre-edition { padding:10px 12px; border-bottom:1px solid #2c3e50; background:#202d3b; }
   #barre-edition .rappel { font-size:11px; color:#ffc46b; line-height:1.45; margin-bottom:8px; }
   #barre-edition button { width:100%; margin-bottom:6px; padding:7px 8px; font-size:12px;
@@ -522,7 +541,7 @@ _GABARIT = r"""<!DOCTYPE html>
   #btn-enregistrer:hover { background:#388e3c; }
   #btn-epurer { background:#37474f; color:#e8eef4; }
   #btn-epurer:hover { background:#455a64; }
-  .outils { gap:3px; flex-shrink:0; flex-direction:column; }
+  .outils { display:flex; gap:3px; flex-shrink:0; flex-direction:column; }
   .outils button { background:#2c3e50; color:#e8eef4; border:none; border-radius:3px;
                    cursor:pointer; font-size:11px; padding:2px 5px; line-height:1.3; }
   .outils button:hover { background:#43607d; }
@@ -624,9 +643,12 @@ _GABARIT = r"""<!DOCTYPE html>
       <h1 id="titre-carte"></h1>
       <button id="btn-mode" type="button" title="Passer en mode édition">✏️</button>
     </div>
+    <button id="rappel-sauvegarde" type="button">⚠️ Modifications non enregistrées —
+      cliquez ici, puis 💾 Enregistrer, pour créer le fichier à jour</button>
     <div class="aide">Cliquez sur un point de la carte ou sur une photo de la liste.
-      Le cône indique la direction de prise de vue. Le bouton ✏️ permet de modifier
-      cette carte (commentaires, noms, ordre, titre, directions) puis de l'enregistrer.</div>
+      Le cône indique la direction de prise de vue. Le crayon ✎ d'une photo, ou le
+      bouton ✏️ en haut, ouvre le mode édition (commentaires, noms, ordre, titre,
+      directions) ; pensez ensuite à enregistrer.</div>
     <div id="note" class="note" hidden></div>
     <div id="note-calibration" class="note" hidden></div>
     <div id="barre-edition">
@@ -770,6 +792,25 @@ document.getElementById('app').innerHTML =
 let modeEdition = false;
 let premierRendu = true;
 let courant = 0;              // index dans la liste visible, pour la visionneuse
+let modifie = false;          // modifications non encore enregistrées dans un fichier
+
+/* Signale qu'il reste des modifications non enregistrées. Le fichier étant un
+   HTML autonome, rien n'est sauvegardé tant qu'on n'a pas téléchargé un nouveau
+   fichier (💾) : ce drapeau alimente le rappel visible et l'avertissement du
+   navigateur à la fermeture (beforeunload). */
+function marquerModifie() {
+  modifie = true;
+  const rappel = document.getElementById('rappel-sauvegarde');
+  if (rappel) rappel.classList.add('actif');
+}
+
+/* Appelé après un enregistrement réussi : les modifications sont désormais dans
+   le fichier téléchargé, le rappel et l'avertissement n'ont plus lieu d'être. */
+function marquerEnregistre() {
+  modifie = false;
+  const rappel = document.getElementById('rappel-sauvegarde');
+  if (rappel) rappel.classList.remove('actif');
+}
 
 function echapper(texte) {
   return String(texte === null || texte === undefined ? '' : texte)
@@ -1242,6 +1283,9 @@ carte.on('click', function (evenement) {
 });
 
 function rendu() {
+  // Tout rendu sauf le tout premier fait suite à une modification (réordonner,
+  // masquer, rétablir, calibrer, éditer une fiche…) : un seul point à marquer.
+  if (!premierRendu) marquerModifie();
   rendreTitre();
   rendreListe();
   rendreMarqueurs();
@@ -1269,6 +1313,15 @@ function basculerEdition() {
   bouton.textContent = modeEdition ? '✔️' : '✏️';
   bouton.title = modeEdition ? 'Quitter le mode édition' : 'Passer en mode édition';
   rafraichirCarte();
+}
+
+/* Édite une photo directement depuis son crayon, sans passer d'abord par le
+   crayon principal : on entre en mode édition si on ne l'est pas déjà, puis on
+   ouvre la modale. basculerEdition ne reconstruit ni la liste ni les bulles
+   (simple invalidateSize), la modale s'ouvre donc proprement par-dessus. */
+function editerPoint(id) {
+  if (!modeEdition) basculerEdition();
+  ouvrirModale(id);
 }
 
 /* Réordonnancement : on échange le rang du point avec celui de son voisin
@@ -1404,6 +1457,9 @@ function enregistrer(epurer) {
   lien.click();
   document.body.removeChild(lien);
   setTimeout(() => URL.revokeObjectURL(lien.href), 10000);
+  // Les modifications sont maintenant dans le fichier téléchargé : plus rien à
+  // signaler. (Un éventuel abandon de la version épurée est déjà sorti plus haut.)
+  marquerEnregistre();
 }
 
 /* ------------------------------ Écoutes -------------------------------- */
@@ -1411,6 +1467,26 @@ function enregistrer(epurer) {
 document.getElementById('btn-mode').onclick = basculerEdition;
 document.getElementById('btn-enregistrer').onclick = () => enregistrer(false);
 document.getElementById('btn-epurer').onclick = () => enregistrer(true);
+
+// Le rappel ramène vers l'enregistrement : il ouvre le mode édition (où vivent
+// les boutons 💾) et met le bouton principal en évidence. C'est la réponse au
+// piège de la ✔️ qui, en quittant l'édition, fait disparaître ces boutons.
+document.getElementById('rappel-sauvegarde').onclick = function () {
+  if (!modeEdition) basculerEdition();
+  const enregistrer = document.getElementById('btn-enregistrer');
+  enregistrer.scrollIntoView({ block: 'nearest' });
+  enregistrer.focus();
+};
+
+// Filet de sécurité ultime : quel que soit le chemin de sortie (fermeture de
+// l'onglet, rechargement, navigation), le navigateur avertit s'il reste des
+// modifications non enregistrées. C'est ce qui empêche de perdre son travail
+// après avoir cliqué la ✔️ en croyant avoir sauvegardé.
+window.addEventListener('beforeunload', function (evenement) {
+  if (!modifie) return;
+  evenement.preventDefault();
+  evenement.returnValue = '';        // requis par certains navigateurs pour l'invite
+});
 document.getElementById('modale-annuler').onclick = fermerModale;
 document.getElementById('modale-valider').onclick = validerModale;
 document.getElementById('modale-direction').addEventListener('input', rendreEtatDirection);
@@ -1442,6 +1518,7 @@ document.getElementById('offset-curseur').addEventListener('input', function () 
   DONNEES.offset = Number(this.value);
   majCones();
   rendreCalibration();
+  marquerModifie();               // le glissement mute l'offset sans rendu() complet
 });
 document.getElementById('offset-curseur').addEventListener('change', rendu);
 
@@ -1467,6 +1544,7 @@ document.getElementById('btn-viser-temoin').onclick = function () {
 document.getElementById('titre-carte').addEventListener('input', function () {
   DONNEES.titre = this.textContent.trim();
   document.title = DONNEES.titre;
+  marquerModifie();               // l'édition du titre ne passe pas par rendu()
 });
 
 // Un seul écouteur pour toute la liste : les lignes sont redessinées à chaque
@@ -1479,7 +1557,7 @@ document.getElementById('liste').addEventListener('click', function (evenement) 
     const id = Number(bouton.dataset.id);
     if (bouton.dataset.action === 'monter')    deplacer(id, -1);
     if (bouton.dataset.action === 'descendre') deplacer(id, 1);
-    if (bouton.dataset.action === 'modifier')  ouvrirModale(id);
+    if (bouton.dataset.action === 'modifier')  editerPoint(id);
     if (bouton.dataset.action === 'masquer')   { pointParId(id).masque = true; rendu(); }
     return;
   }
@@ -1505,7 +1583,7 @@ document.addEventListener('click', function (evenement) {
   const bouton = evenement.target.closest('.leaflet-popup button[data-action]');
   if (bouton) {
     const id = Number(bouton.dataset.id);
-    if (bouton.dataset.action === 'modifier') ouvrirModale(id);
+    if (bouton.dataset.action === 'modifier') editerPoint(id);
     // rendu() reconstruit les marqueurs : la bulle ouverte disparaît d'elle-même.
     if (bouton.dataset.action === 'masquer') { pointParId(id).masque = true; rendu(); }
     return;
