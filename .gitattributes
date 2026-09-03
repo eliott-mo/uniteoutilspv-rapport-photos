@@ -1,0 +1,20 @@
+# Fins de ligne normalisees en LF, dans le depot ET a la copie de travail.
+#
+# POURQUOI. packages.txt (« tesseract-ocr ») est lu tel quel par Streamlit
+# Cloud. Une edition depuis un poste Windows peut y introduire du CRLF : le nom
+# du paquet devient « tesseract-ocr\r », que le Cloud ignore SILENCIEUSEMENT.
+# Tesseract n'est alors plus installe et l'OCR de position echoue a l'execution,
+# sans le moindre message. Piege deja rencontre sur un autre outil du parc.
+#
+# Le « eol=lf » (et pas seulement « text=auto ») est indispensable ici : ce poste
+# a core.autocrlf=true, donc sans lui un clone neuf ressortirait les fichiers en
+# CRLF dans la copie de travail. Or generation_html.py INJECTE vendor/leaflet.js
+# tel qu'il est sur le disque : la carte produite dependrait alors des reglages
+# git du developpeur. Avec eol=lf, la generation est reproductible d'un poste a
+# l'autre, et le Leaflet embarque reste octet pour octet identique a l'amont
+# (cf. vendor/leaflet-1.9.4/PROVENANCE.md, qui en documente les tailles).
+* text=auto eol=lf
+
+# Binaires : jamais de conversion, elle les corromprait.
+*.png binary
+*.jpg binary
