@@ -7,7 +7,14 @@ requête vers un CDN, et peut être envoyé par mail ou déposé sur un serveur 
 dossier annexe. Seul le fond de carte (les tuiles) est chargé depuis Internet ;
 sans réseau, la carte s'ouvre et reste utilisable sur un fond gris.
 
-CARTE ÉDITABLE (version 3)
+Chaque carte porte, dans le pied de son panneau et dans une balise
+`<meta name="carte-photos-outil">`, la version de l'outil qui l'a produite
+(`VERSION_OUTIL`). Une carte diffusée emporte son code et reste figée à cette
+version : sans cette mention, rien ne permettait de dire si une carte reçue
+connaît ou non la dernière évolution — la recharger en mode « Compléter » la
+régénère avec la version courante.
+
+CARTE ÉDITABLE (format v4)
 --------------------------
 La page s'ouvre en consultation. Le bouton ✏️ en haut bascule en mode édition ;
 le crayon ✎ présent sur chaque photo (liste et bulle) y bascule aussi, en
@@ -130,6 +137,14 @@ from lecture_exif import SEUIL_PRECISION_M
 # Version du format de fichier. À incrémenter si la structure du bloc
 # #donnees-carte change, pour que le réimport sache à quoi il a affaire.
 VERSION_CARTE = 4
+
+# Version de l'outil qui produit la carte, en année.mois de mise en service.
+# Elle est inscrite dans chaque carte (pied du panneau et balise <meta>) pour
+# répondre d'un coup d'œil à la question « cette carte est-elle à jour ? » —
+# une carte diffusée reste figée à la version qui l'a produite, et rien d'autre
+# dans le fichier ne le disait. À changer à chaque mise en production apportant
+# une différence visible pour l'utilisateur.
+VERSION_OUTIL = "2026.09"
 
 # Fonds de carte. L'ortho IGN est la plus détaillée sur la France ;
 # Esri sert de secours et couvre le monde entier (utile en outre-mer).
@@ -301,6 +316,7 @@ def _assembler_html(donnees):
     return (_GABARIT.replace("__LEAFLET_CSS__", css)
                     .replace("__LEAFLET_JS__", js)
                     .replace("__VERSION__", str(donnees["version"]))
+                    .replace("__OUTIL__", VERSION_OUTIL)
                     .replace("__TITRE__", _echapper(donnees["titre"]))
                     .replace("__DONNEES__", _json_pour_html(donnees)))
 
@@ -562,6 +578,7 @@ _GABARIT = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="carte-photos-version" content="__VERSION__">
+<meta name="carte-photos-outil" content="__OUTIL__">
 <title>__TITRE__</title>
 <style id="leaflet-css">__LEAFLET_CSS__</style>
 <script id="leaflet-js">__LEAFLET_JS__</script>
@@ -585,6 +602,10 @@ _GABARIT = r"""<!DOCTYPE html>
                    border-bottom:1px solid #2c3e50; }
   #panneau .note { font-size:11px; color:#ffc46b; padding:9px 16px; line-height:1.5;
                    background:#2a2110; border-bottom:1px solid #2c3e50; }
+  /* margin-top:auto colle le pied en bas du panneau tant que la liste est courte,
+     et le laisse suivre le contenu dès qu'elle déborde. */
+  #pied-panneau { margin-top:auto; font-size:10px; color:#6c8199; text-align:right;
+                  padding:8px 16px 10px; border-top:1px solid #2c3e50; cursor:help; }
   .vignette { display:flex; gap:10px; align-items:center; padding:9px 12px; cursor:pointer;
               border-bottom:1px solid #2a3a4a; transition:background .12s; }
   .vignette:hover { background:#27384a; }
@@ -822,6 +843,7 @@ _GABARIT = r"""<!DOCTYPE html>
     </details>
     <div id="liste"></div>
     <div id="corbeille"><h2>Corbeille</h2><div id="liste-masquees"></div></div>
+    <div id="pied-panneau" title="Version de l'outil qui a produit cette carte, et version du format du fichier. Une carte reste figée à la version qui l'a créée : pour profiter des évolutions de l'outil, la recharger en mode « Compléter ».">Rapport photos __OUTIL__ · format v__VERSION__</div>
   </div>
   <div id="carte"><div id="banniere-visee"></div></div>
 </div>
@@ -1722,6 +1744,10 @@ function documentComplet(donnees) {
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="carte-photos-version" content="' + donnees.version + '">',
+    // Version de l'outil relue depuis la page : enregistrer ne régénère pas la
+    // carte, la version qui l'a produite reste donc la sienne.
+    '<meta name="carte-photos-outil" content="' +
+      document.querySelector('meta[name="carte-photos-outil"]').content + '">',
     '<title>' + echapper(donnees.titre) + '</title>',
     // Leaflet est relu depuis la page et réémis tel quel : sans cela, le fichier
     // réenregistré perdrait la bibliothèque et ne s'ouvrirait plus du tout.

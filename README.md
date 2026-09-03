@@ -256,6 +256,25 @@ contient le même numéro de version. Le format de ce bloc est documenté en tê
 convertie à l'ouverture comme au réimport, sans changer d'apparence
 (`cap_brut = cap`, `cap_manuel = null`, `offset = 0`).
 
+### Savoir de quand date une carte
+
+Une carte diffusée est un fichier autonome : elle emporte le code de l'outil qui
+l'a produite et **reste figée à cette version**. Rafraîchir le navigateur n'y
+change rien, et rien ne distinguait à l'œil une carte de l'an dernier d'une
+carte du jour — de quoi croire qu'une nouveauté « n'apparaît pas chez soi ».
+
+Le pied du panneau porte donc la mention `Rapport photos 2026.09 · format v4` :
+version de l'outil, puis version du format. La même information figure dans
+l'en-tête, `<meta name="carte-photos-outil">`, pour un contrôle sans ouvrir la
+carte. Une carte ancienne se met à jour en la rechargeant dans l'outil (mode
+**Compléter**, sans ajouter de photo) : le fichier produit est régénéré par la
+version courante.
+
+`VERSION_OUTIL`, en tête de `generation_html.py`, est en `année.mois` de mise en
+service — **à changer à chaque mise en production** apportant une différence
+visible pour l'utilisateur. `VERSION_CARTE`, lui, ne bouge que si la structure
+du bloc de données change.
+
 ### Replacer une photo au bon endroit
 
 Une photo mal localisée — GPS dégradé, position lue de travers — se replace d'un
