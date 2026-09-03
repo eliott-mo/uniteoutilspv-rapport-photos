@@ -189,8 +189,28 @@ incrustée), pas à régler quoi que ce soit.
 Pour éviter le problème à la source : sur le terrain, ouvrir Google Maps, toucher
 le point bleu, choisir *Étalonner la boussole* et dessiner un 8 en l'air.
 
-Le fichier HTML produit est autonome (photos intégrées) : il s'ouvre par
-double-clic et peut être envoyé par mail.
+Le fichier HTML produit est autonome : il s'ouvre par double-clic et peut être
+envoyé par mail.
+
+### Ce que « autonome » veut dire exactement
+
+Sont **embarqués dans le fichier** : les photos (base64) et **Leaflet lui-même**
+— bibliothèque, feuille de style et ses trois images, en `data:` URI (voir
+[`vendor/leaflet-1.9.4/PROVENANCE.md`](vendor/leaflet-1.9.4/PROVENANCE.md)).
+La carte ne fait donc **aucune requête vers un CDN**.
+
+C'est délibéré : ces cartes sont des livrables ouverts sur des réseaux qu'on ne
+maîtrise pas. Tant que Leaflet venait d'un CDN, un proxy d'entreprise qui le
+bloquait — ou une panne — donnait une page blanche et
+`Uncaught ReferenceError: L is not defined`. Cette classe de pannes a disparu.
+
+Reste tributaire d'Internet, par nature : le **fond de carte** (tuiles IGN /
+Esri). Sans réseau, la carte s'ouvre et reste pleinement utilisable — photos,
+cônes, bulles, édition, enregistrement — sur un fond gris.
+
+Le fichier réenregistré depuis le navigateur reste tout aussi autonome :
+`documentComplet()` relit les blocs Leaflet depuis la page et les réémet, comme
+il le fait déjà pour la feuille de style et le script de la carte.
 
 ## Carte éditable (format version 3)
 
@@ -254,12 +274,19 @@ Deux repères le traitent, sans jamais déplacer les points :
 
 - **Compteur sur le marqueur** — « ×3 » tant que les marqueurs se recouvrent.
   Écrit « ×N » et non « N » pour ne pas se confondre avec le numéro de la photo.
+  **Un seul compteur par groupe**, porté par le marqueur le plus au sud, celui
+  que Leaflet dessine au-dessus : en afficher un par membre donnait autant de
+  pastilles que de photos empilées — deux « ×2 » pour une unique paire, illisible
+  et contredit par les marqueurs bien visibles à côté.
 - **Navigateur dans la bulle** — « ‹ 2/3 photos superposées › » pour feuilleter
   le groupe sans fermer la bulle. Disponible **en consultation** : c'est de la
   lecture, pas une retouche.
 
-Le critère est une distance **à l'écran** (`TOLERANCE_GROUPE_PX`, 30 px), pas au
-sol, et il est **recalculé à chaque zoom**. C'est essentiel : un seuil en mètres
+Le critère est une distance **à l'écran** (`TOLERANCE_GROUPE_PX`, 20 px — la
+largeur de la pastille rouge, liseré compris), pas au sol, et il est **recalculé
+à chaque zoom**. En deçà, les pastilles se confondent et l'une masque réellement
+l'autre ; au-delà, chaque marqueur se voit et se clique, un compteur n'y
+signalerait qu'un empêchement imaginaire. C'est essentiel : un seuil en mètres
 serait trompeur — une fois zoomé, les photos se séparent visuellement et un
 compteur figé laisserait croire que chacune en cache encore d'autres. En zoomant,
 les groupes se scindent puis les compteurs disparaissent d'eux-mêmes.
@@ -357,9 +384,11 @@ le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 - `app.SEUIL_LOT_MO` : poids maximal d'un lot déposé en une fois (garde-fou
   mémoire) ; complété par `maxUploadSize` dans `.streamlit/config.toml` pour le
   plafond par fichier (voir *Limite de poids d'un lot*).
-- `TOLERANCE_GROUPE_PX` (JavaScript de la carte) : distance **à l'écran** (30 px)
-  en deçà de laquelle deux marqueurs sont considérés superposés — pilote le
-  compteur « ×N » et le navigateur de la bulle. Recalculé à chaque zoom.
+- `TOLERANCE_GROUPE_PX` (JavaScript de la carte) : distance **à l'écran** (20 px,
+  la largeur de la pastille) en deçà de laquelle deux marqueurs sont considérés
+  superposés — pilote le compteur « ×N » et le navigateur de la bulle. Recalculé
+  à chaque zoom. L'augmenter fait apparaître des compteurs sur des marqueurs
+  pourtant distincts et cliquables.
 - `generation_html.FONDS_DE_CARTE` : fonds disponibles (ortho IGN, Esri, plan IGN).
   Le `zoom_max` de chaque fond est le dernier niveau réellement servi ; au-delà,
   Leaflet agrandit la dernière tuile (flou, jamais gris). L'ortho IGN plafonne à

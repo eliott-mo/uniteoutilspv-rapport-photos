@@ -1,9 +1,11 @@
 """
 generation_html.py — Génération de la carte HTML autoportante et éditable.
 
-Le fichier produit contient les photos encodées en base64 : il est autonome et
-peut être envoyé par mail ou déposé sur un serveur sans dossier annexe.
-Seuls le fond de carte et la bibliothèque Leaflet sont chargés depuis Internet.
+Le fichier produit contient les photos encodées en base64 **et Leaflet lui-même**
+(bibliothèque, feuille de style, images) : il est autonome, ne fait aucune
+requête vers un CDN, et peut être envoyé par mail ou déposé sur un serveur sans
+dossier annexe. Seul le fond de carte (les tuiles) est chargé depuis Internet ;
+sans réseau, la carte s'ouvre et reste utilisable sur un fond gris.
 
 CARTE ÉDITABLE (version 3)
 --------------------------
@@ -101,8 +103,10 @@ deux côtés, comme pour le cap.
 """
 
 import base64
+import functools
 import io
 import json
+import os
 import warnings
 from PIL import Image, ImageOps
 
@@ -159,6 +163,36 @@ def _image_en_base64(chemin, largeur_max, qualite):
         tampon = io.BytesIO()
         image.save(tampon, format="JPEG", quality=qualite, optimize=True)
     return base64.b64encode(tampon.getvalue()).decode("ascii")
+
+
+# Leaflet est embarqué dans chaque carte plutôt que chargé depuis un CDN. Ces
+# fichiers sont des livrables envoyés par mail, ouverts sur des réseaux qu'on ne
+# maîtrise pas : un CDN bloqué par un proxy d'entreprise, ou en panne, laissait
+# la carte inutilisable (page blanche, « L is not defined »). Voir
+# vendor/leaflet-1.9.4/PROVENANCE.md.
+_LEAFLET = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "vendor", "leaflet-1.9.4")
+
+
+@functools.lru_cache(maxsize=1)
+def _leaflet():
+    """Retourne (css, js) de Leaflet, prêts à inliner. Lu une fois, puis mémorisé.
+
+    Le CSS référence trois PNG par chemin relatif (`images/…`). Inliné tel quel,
+    ces chemins ne pointeraient plus sur rien et l'icône du sélecteur de fonds
+    serait cassée : on remplace donc chaque référence par l'image elle-même, en
+    data: URI.
+    """
+    with open(os.path.join(_LEAFLET, "leaflet.css"), encoding="utf-8") as fichier:
+        css = fichier.read()
+    dossier_images = os.path.join(_LEAFLET, "images")
+    for nom in sorted(os.listdir(dossier_images)):
+        with open(os.path.join(dossier_images, nom), "rb") as image:
+            encodee = base64.b64encode(image.read()).decode("ascii")
+        css = css.replace(f"images/{nom}", f"data:image/png;base64,{encodee}")
+    with open(os.path.join(_LEAFLET, "leaflet.js"), encoding="utf-8") as fichier:
+        js = fichier.read()
+    return css, js
 
 
 def _json_pour_html(objet):
@@ -223,9 +257,19 @@ def _point_depuis_photo(photo, identifiant, ordre, largeur_max, qualite):
 
 
 def _assembler_html(donnees):
-    """Injecte l'objet de données dans le gabarit et retourne le HTML complet."""
-    return (_GABARIT.replace("__TITRE__", _echapper(donnees["titre"]))
+    """Injecte Leaflet puis l'objet de données dans le gabarit, et retourne le HTML.
+
+    Ordre volontaire : Leaflet d'abord (sa source est vérifiée exempte de nos
+    marqueurs `__XXX__`), le titre et les données ensuite. Ces derniers viennent
+    de l'utilisateur — les injecter en dernier garantit qu'un titre ou un
+    commentaire contenant par hasard « __LEAFLET_JS__ » ne déclenche aucune
+    substitution.
+    """
+    css, js = _leaflet()
+    return (_GABARIT.replace("__LEAFLET_CSS__", css)
+                    .replace("__LEAFLET_JS__", js)
                     .replace("__VERSION__", str(donnees["version"]))
+                    .replace("__TITRE__", _echapper(donnees["titre"]))
                     .replace("__DONNEES__", _json_pour_html(donnees)))
 
 
@@ -461,8 +505,8 @@ _GABARIT = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="carte-photos-version" content="__VERSION__">
 <title>__TITRE__</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style id="leaflet-css">__LEAFLET_CSS__</style>
+<script id="leaflet-js">__LEAFLET_JS__</script>
 <style id="style-carte">
   * { box-sizing: border-box; }
   html, body { margin:0; padding:0; height:100%; font-family:Segoe UI,Roboto,Arial,sans-serif; }
@@ -939,36 +983,56 @@ document.addEventListener('visibilitychange', function () {
    gênent que lorsqu'ils se recouvrent, ce qui dépend entièrement du zoom. Un
    seuil en mètres serait trompeur — une fois zoomé, les photos se séparent
    visuellement et un compteur figé laisserait croire que chacune en cache
-   encore d'autres. Le regroupement est donc recalculé à chaque zoom. */
-const TOLERANCE_GROUPE_PX = 30;
+   encore d'autres. Le regroupement est donc recalculé à chaque zoom.
 
-/* Tableau parallèle à pointsVisibles() : pour chaque rang, la liste des rangs
-   dont le marqueur se superpose au sien (lui compris), dans l'ordre d'affichage. */
-function groupesParRang(visibles) {
-  const groupes = [], parRang = [];
+   Le seuil vaut la largeur de la pastille : 18 px de rouge, 22 avec son liseré.
+   En deçà, les pastilles se confondent et l'une masque réellement l'autre ;
+   au-delà, chaque marqueur se voit et se clique — un compteur n'y signalerait
+   qu'un empêchement imaginaire, et se contredirait à l'écran (trois marqueurs
+   bien distincts portant chacun « ×2 »). */
+const TOLERANCE_GROUPE_PX = 20;
+
+// Résultats du dernier calcul, réutilisés par les bulles (ouvertes plus tard) et
+// par majCones(), qui ne doit pas perdre les compteurs pendant un glissement du
+// curseur de calibration.
+let groupesRang = [];   // pour chaque rang, les rangs superposés au sien (lui compris)
+let comptesRang = [];   // compteur à dessiner sur ce rang, ou 0
+
+/* Recalcule les groupes de marqueurs superposés et le compteur de chaque rang.
+
+   UN SEUL compteur par groupe : en afficher un par membre donnait autant de
+   pastilles que de photos empilées — deux « ×2 » côte à côte pour une unique
+   paire, illisible et contradictoire à l'écran.
+
+   Il est porté par le marqueur le plus au sud, c'est-à-dire celui que Leaflet
+   dessine par-dessus les autres (son z-index suit l'ordonnée écran) : c'est donc
+   le seul dont on soit certain qu'il ne sera pas masqué. */
+function calculerGroupes(visibles) {
   const pixels = visibles.map(p => carte.latLngToLayerPoint([p.lat, p.lon]));
+  const groupes = [];
+  groupesRang = [];
+  comptesRang = visibles.map(() => 0);
   visibles.forEach((p, i) => {
     const g = groupes.find(g => pixels[g[0]].distanceTo(pixels[i]) <= TOLERANCE_GROUPE_PX);
     if (g) g.push(i); else groupes.push([i]);
   });
-  groupes.forEach(g => g.forEach(i => { parRang[i] = g; }));
-  return parRang;
+  groupes.forEach(g => {
+    g.forEach(i => { groupesRang[i] = g; });
+    if (g.length > 1) {
+      const dessus = g.reduce((a, b) => (pixels[b].y > pixels[a].y ? b : a));
+      comptesRang[dessus] = g.length;
+    }
+  });
 }
 
-// Groupes du dernier calcul, réutilisés par majCones() pour ne pas perdre le
-// compteur pendant un glissement du curseur de calibration.
-let groupesRang = [];
-
-/* Recalcule les groupes et rafraîchit les compteurs. Appelé à chaque fin de
-   zoom : seules les icônes sont refaites, les bulles se recalculant, elles, à
-   l'ouverture (les rebâtir ici rejouerait les images base64 pour rien). */
+/* Rafraîchit les compteurs après un zoom : seules les icônes sont refaites, les
+   bulles se recalculant, elles, à l'ouverture (les rebâtir ici rejouerait les
+   images base64 pour rien). */
 function rafraichirGroupes() {
   const visibles = pointsVisibles();
-  groupesRang = groupesParRang(visibles);
+  calculerGroupes(visibles);
   visibles.forEach((p, i) => {
-    if (marqueurs[i]) {
-      marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1, groupesRang[i].length));
-    }
+    if (marqueurs[i]) marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1, comptesRang[i]));
   });
 }
 
@@ -1147,10 +1211,10 @@ function rendreMarqueurs() {
   coucheMarqueurs.clearLayers();
   marqueurs = [];
   const visibles = pointsVisibles();
-  groupesRang = groupesParRang(visibles);
+  calculerGroupes(visibles);
   visibles.forEach((p, i) => {
     const m = L.marker([p.lat, p.lon],
-                       { icon: iconeCone(capEffectif(p), i + 1, groupesRang[i].length) });
+                       { icon: iconeCone(capEffectif(p), i + 1, comptesRang[i]) });
     // Contenu calculé à l'ouverture : le regroupement dépend du zoom, une chaîne
     // figée au rendu deviendrait fausse dès le premier zoom.
     m.bindPopup(() => contenuPopup(p, i + 1, groupesRang[i]), { maxWidth: 300 });
@@ -1334,10 +1398,9 @@ function reglerOffset(valeur) {
    bulles, images encodées comprises, à chaque degré parcouru. */
 function majCones() {
   pointsVisibles().forEach((p, i) => {
-    // Groupes du dernier rendu : le curseur ne change que les caps, jamais les
-    // positions, ils restent donc valides — et le compteur ×N survit au réglage.
-    const taille = (groupesRang[i] || [i]).length;
-    if (marqueurs[i]) marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1, taille));
+    // Compteurs du dernier calcul : le curseur ne change que les caps, jamais
+    // les positions, ils restent donc valides et survivent au réglage.
+    if (marqueurs[i]) marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1, comptesRang[i]));
   });
 }
 
@@ -1517,8 +1580,10 @@ function documentComplet(donnees) {
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="carte-photos-version" content="' + donnees.version + '">',
     '<title>' + echapper(donnees.titre) + '</title>',
-    '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">',
-    '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>',
+    // Leaflet est relu depuis la page et réémis tel quel : sans cela, le fichier
+    // réenregistré perdrait la bibliothèque et ne s'ouvrirait plus du tout.
+    '<style id="leaflet-css">' + document.getElementById('leaflet-css').textContent + '</style>',
+    '<script id="leaflet-js">' + document.getElementById('leaflet-js').textContent + '<\/script>',
     '<style id="style-carte">' + document.getElementById('style-carte').textContent + '</style>',
     '</head>',
     '<body>',

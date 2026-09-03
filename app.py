@@ -386,8 +386,10 @@ Une position hors de France métropolitaine est refusée par sécurité : mieux 
   simplement que l'application n'écrit pas cette information.
 - Un indice de confiance inférieur à {SEUIL_CONFIANCE:.2f} signale une détection
   douteuse à vérifier à la main.
-- La carte finale a besoin d'une connexion Internet pour afficher le fond
-  satellite, mais les photos, elles, sont intégrées dans le fichier.
+- La carte finale **s'ouvre toujours**, même sans réseau : les photos et la
+  bibliothèque cartographique sont intégrées dans le fichier. Seul le **fond
+  satellite** (les tuiles) demande une connexion Internet — sans elle, la carte
+  reste pleinement utilisable sur un fond gris.
 
 **Éviter le problème à la source**
 Faire calibrer la boussole avant la visite : ouvrir Google Maps sur le téléphone,
