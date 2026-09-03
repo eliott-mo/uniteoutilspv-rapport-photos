@@ -52,7 +52,7 @@ FORMAT DU BLOC `#donnees-carte` (lu au réimport)
 C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
 
     {
-      "version": 3,                  entier, suit <meta name="carte-photos-version">
+      "version": 4,                  entier, suit <meta name="carte-photos-version">
       "titre": "Visite de site",     titre de la carte, éditable dans la page
       "note": "",                    note libre ; les cartes version 2 y portaient
                                      la mention de calibration, désormais déduite
@@ -64,8 +64,12 @@ C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
         {
           "id": 0,                   identifiant stable, jamais réattribué
           "nom": "IMG_0420.HEIC",    nom affiché, éditable
-          "lat": 48.7343,
-          "lon": 6.6516,
+          "lat_brut": 48.7343,       position d'origine (EXIF/OCR), JAMAIS modifiée
+          "lon_brut": 6.6516,
+          "lat_manuel": null,        position replacée à la main, ou null
+          "lon_manuel": null,
+          "lat": 48.7343,            position portée sur la carte — valeur DÉDUITE
+          "lon": 6.6516,             des quatre champs ci-dessus, jamais saisie
           "cap_brut": 340.0,         direction d'origine, JAMAIS modifiée, ou null
           "cap_manuel": null,        direction figée à la main, ou null
           "cap": 340.0,              direction portée sur la carte — valeur DÉDUITE
@@ -82,6 +86,17 @@ C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
 
 Le champ `precision_m` voyage avec les données pour que l'alerte « position peu
 fiable » survive au réenregistrement comme au réimport.
+
+RÈGLE DE LA POSITION (même forme que celle du cap)
+--------------------------------------------------
+    lat_manuel/lon_manuel définis -> position = celle-là   (replacée à la main)
+    sinon                         -> position = lat_brut/lon_brut
+
+L'origine n'est jamais écrasée : on peut revenir en arrière, et la carte sait
+qu'une retouche a eu lieu — elle l'affiche, car déplacer une photo touche à ce
+que le rapport atteste. Une photo replacée à la main ne porte plus l'alerte de
+précision GPS : l'incertitude décrivait la fixation d'origine, que le chargé de
+projet vient précisément de corriger.
 
 RÈGLE DU CAP (une seule, appliquée partout — Python comme JavaScript)
 ---------------------------------------------------------------------
@@ -114,7 +129,7 @@ from lecture_exif import SEUIL_PRECISION_M
 
 # Version du format de fichier. À incrémenter si la structure du bloc
 # #donnees-carte change, pour que le réimport sache à quoi il a affaire.
-VERSION_CARTE = 3
+VERSION_CARTE = 4
 
 # Fonds de carte. L'ortho IGN est la plus détaillée sur la France ;
 # Esri sert de secours et couvre le monde entier (utile en outre-mer).
@@ -224,6 +239,19 @@ def _cap_effectif(point, offset):
     return (point["cap_brut"] + offset) % 360
 
 
+def _position_effective(point):
+    """LA règle de la position — jumelle de positionEffective() dans la page.
+
+    Une position replacée à la main l'emporte ; sinon c'est celle d'origine,
+    issue de l'EXIF ou de l'OCR. Même forme que la règle du cap : l'original
+    n'est jamais écrasé, ce qui permet de revenir en arrière et de savoir qu'une
+    retouche a eu lieu.
+    """
+    if point.get("lat_manuel") is not None and point.get("lon_manuel") is not None:
+        return point["lat_manuel"], point["lon_manuel"]
+    return point.get("lat_brut"), point.get("lon_brut")
+
+
 def _point_depuis_photo(photo, identifiant, ordre, largeur_max, qualite):
     """Bâtit un point de la carte à partir d'une photo analysée.
 
@@ -242,6 +270,10 @@ def _point_depuis_photo(photo, identifiant, ordre, largeur_max, qualite):
     return {
         "id": identifiant,
         "nom": photo["nom"],
+        "lat_brut": photo["lat"],
+        "lon_brut": photo["lon"],
+        "lat_manuel": None,
+        "lon_manuel": None,
         "lat": photo["lat"],
         "lon": photo["lon"],
         "cap_brut": cap_brut,
@@ -354,16 +386,41 @@ def _migrer(donnees):
     d'origine avec un offset nul, ce qui laisse la carte rigoureusement
     identique à l'écran tout en la rendant calibrable.
     """
-    if not donnees.get("version", 0) >= VERSION_CARTE:
+    version = donnees.get("version", 0)
+
+    # v2 -> v3 : le champ `cap` portait offset et corrections deja appliques ;
+    # il devient la direction d'origine, avec un offset nul.
+    if version < 3:
         for point in donnees["points"]:
             point["cap_brut"] = point.get("cap")
         donnees["offset"] = 0
+
+    # v3 -> v4 : la position devient deduite, comme le cap. L'existante est
+    # celle d'origine ; aucune n'a encore ete replacee a la main.
+    if version < 4:
+        for point in donnees["points"]:
+            point["lat_brut"] = point.get("lat")
+            point["lon_brut"] = point.get("lon")
+            point["lat_manuel"] = None
+            point["lon_manuel"] = None
+
+    # Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
+    # au mieux sans pretendre l'avoir convertie.
+    if version < VERSION_CARTE:
         donnees["version"] = VERSION_CARTE
+
     if not isinstance(donnees.get("offset"), (int, float)):
         donnees["offset"] = 0
     for point in donnees["points"]:
         point.setdefault("cap_brut", None)
         point.setdefault("cap_manuel", None)
+        point.setdefault("lat_brut", point.get("lat"))
+        point.setdefault("lon_brut", point.get("lon"))
+        point.setdefault("lat_manuel", None)
+        point.setdefault("lon_manuel", None)
+        # `lat`/`lon` sont deduites : on les remet d'aplomb, un fichier edite a
+        # la main pourrait les avoir laissees en desaccord avec la regle.
+        point["lat"], point["lon"] = _position_effective(point)
     _corriger_zoom_max(donnees)
     return donnees
 
@@ -483,9 +540,10 @@ def completer_carte(html_existant, nouvelles_photos, largeur_max=1600, qualite=8
     # son cadrage précédent, faute de mieux.
     visibles = [point for point in points if not point.get("masque")]
     if visibles:
+        positions = [_position_effective(point) for point in visibles]
         donnees["centre"] = [
-            sum(point["lat"] for point in visibles) / len(visibles),
-            sum(point["lon"] for point in visibles) / len(visibles),
+            sum(lat for lat, _ in positions) / len(positions),
+            sum(lon for _, lon in positions) / len(positions),
         ]
 
     return _assembler_html(donnees)
@@ -690,11 +748,13 @@ _GABARIT = r"""<!DOCTYPE html>
                                     border-radius:3px; cursor:pointer; font-size:12px;
                                     padding:6px 10px; font-family:inherit; font-weight:600; }
   #modale .ligne-direction button:hover { background:#43607d; }
-  #modale-direction-etat { font-size:11px; color:#555; margin-top:5px; line-height:1.45; }
-  #modale-direction-auto { margin-top:6px; background:#e0e6ec; color:#1e2a38; border:none;
+  #modale-direction-etat, #modale-position-etat { font-size:11px; color:#555;
+                                                  margin-top:5px; line-height:1.45; }
+  #modale .ligne-direction #modale-position-etat { flex:1; margin-top:0; align-self:center; }
+  #modale-direction-auto, #modale-position-auto { margin-top:6px; background:#e0e6ec; color:#1e2a38; border:none;
                            border-radius:3px; cursor:pointer; font-size:11.5px; padding:5px 8px;
                            font-family:inherit; }
-  #modale-direction-auto:hover { background:#cfd8e2; }
+  #modale-direction-auto:hover, #modale-position-auto:hover { background:#cfd8e2; }
   #modale .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
   #modale .actions button { padding:6px 14px; font-size:12px; border:none; border-radius:4px;
                             cursor:pointer; font-weight:600; }
@@ -781,6 +841,12 @@ _GABARIT = r"""<!DOCTYPE html>
     <input id="modale-nom" type="text">
     <label for="modale-commentaire">Commentaire</label>
     <textarea id="modale-commentaire" placeholder="Observation, repère, point de vigilance…"></textarea>
+    <label>Emplacement sur la carte</label>
+    <div class="ligne-direction">
+      <span id="modale-position-etat"></span>
+      <button id="modale-replacer" type="button">📍 Replacer</button>
+    </div>
+    <button id="modale-position-auto" type="button">Rendre à la position d'origine</button>
     <label for="modale-direction">Direction de prise de vue (0 = nord, 90 = est)</label>
     <div class="ligne-direction">
       <input id="modale-direction" type="number" min="0" max="359" step="1" placeholder="automatique">
@@ -814,15 +880,40 @@ const SEUIL_PRECISION = DONNEES.seuil_precision_m;
    d'origine avec un offset nul, ce qui laisse la carte rigoureusement
    identique à l'écran tout en la rendant calibrable. */
 function migrer(d) {
-  if (!(d.version >= 3)) {
+  const version = d.version || 0;
+
+  // v2 -> v3 : le champ `cap` portait offset et corrections deja appliques ; il
+  // devient la direction d'origine, avec un offset nul.
+  if (version < 3) {
     d.points.forEach(p => { p.cap_brut = (p.cap === undefined ? null : p.cap); });
     d.offset = 0;
-    d.version = 3;
   }
+
+  // v3 -> v4 : la position devient deduite, comme le cap. Celle qui existe est
+  // l'origine ; aucune n'a encore ete replacee a la main.
+  if (version < 4) {
+    d.points.forEach(p => {
+      p.lat_brut = p.lat;  p.lon_brut = p.lon;
+      p.lat_manuel = null; p.lon_manuel = null;
+    });
+  }
+
+  // Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
+  // au mieux sans pretendre l'avoir convertie.
+  if (version < 4) d.version = 4;
+
   if (typeof d.offset !== 'number') d.offset = 0;
   d.points.forEach(p => {
     if (p.cap_brut === undefined)   p.cap_brut = null;
     if (p.cap_manuel === undefined) p.cap_manuel = null;
+    if (p.lat_brut === undefined)   p.lat_brut = p.lat;
+    if (p.lon_brut === undefined)   p.lon_brut = p.lon;
+    if (p.lat_manuel === undefined) p.lat_manuel = null;
+    if (p.lon_manuel === undefined) p.lon_manuel = null;
+    // `lat`/`lon` sont deduites : on les remet d'aplomb au cas ou un fichier
+    // edite a la main les aurait laissees en desaccord avec la regle.
+    const pos = positionEffective(p);
+    p.lat = pos[0]; p.lon = pos[1];
   });
   return d;
 }
@@ -840,6 +931,17 @@ function capEffectif(p) {
   if (!defini(p.cap_brut))  return null;
   return ((p.cap_brut + DONNEES.offset) % 360 + 360) % 360;
 }
+
+/* LA règle de la position, de même forme que celle du cap : une position
+   replacée à la main l'emporte ; sinon c'est celle d'origine (EXIF/OCR).
+   L'origine n'est jamais écrasée — on peut revenir en arrière, et la carte sait
+   qu'une retouche a eu lieu. */
+function positionEffective(p) {
+  if (defini(p.lat_manuel) && defini(p.lon_manuel)) return [p.lat_manuel, p.lon_manuel];
+  return [p.lat_brut, p.lon_brut];
+}
+
+function repositionnee(p) { return defini(p.lat_manuel) && defini(p.lon_manuel); }
 
 /* Cap à suivre pour aller d'un point à un autre (orthodromie). Sert à déduire
    une direction d'un clic sur la carte. */
@@ -902,6 +1004,10 @@ function srcImage(p) { return 'data:image/jpeg;base64,' + p.image; }
 /* Précision GPS : une valeur absente signifie « inconnue », jamais « mauvaise ».
    Seule une incertitude annoncée au-delà du seuil déclenche l'alerte. */
 function precisionDouteuse(p) {
+  // Une photo replacée à la main n'est plus concernée : l'incertitude décrivait
+  // la fixation GPS d'origine, que l'utilisateur vient précisément de corriger.
+  // Maintenir l'alerte se contredirait avec le repositionnement affiché.
+  if (repositionnee(p)) return false;
   return p.precision_m !== null && p.precision_m !== undefined
          && p.precision_m > SEUIL_PRECISION;
 }
@@ -1008,7 +1114,7 @@ let comptesRang = [];   // compteur à dessiner sur ce rang, ou 0
    dessine par-dessus les autres (son z-index suit l'ordonnée écran) : c'est donc
    le seul dont on soit certain qu'il ne sera pas masqué. */
 function calculerGroupes(visibles) {
-  const pixels = visibles.map(p => carte.latLngToLayerPoint([p.lat, p.lon]));
+  const pixels = visibles.map(p => carte.latLngToLayerPoint(positionEffective(p)));
   const groupes = [];
   groupesRang = [];
   comptesRang = visibles.map(() => 0);
@@ -1213,7 +1319,7 @@ function rendreMarqueurs() {
   const visibles = pointsVisibles();
   calculerGroupes(visibles);
   visibles.forEach((p, i) => {
-    const m = L.marker([p.lat, p.lon],
+    const m = L.marker(positionEffective(p),
                        { icon: iconeCone(capEffectif(p), i + 1, comptesRang[i]) });
     // Contenu calculé à l'ouverture : le regroupement dépend du zoom, une chaîne
     // figée au rendu deviendrait fausse dès le premier zoom.
@@ -1251,6 +1357,12 @@ function noteCalibration() {
     morceaux.push(manuels + ' direction(s) fixée(s) à la main' +
                   (calibre ? ', non concernée(s)' : '') + '.');
   }
+  // Deplacer une photo touche a ce que le rapport atteste : le lecteur doit le
+  // savoir, au meme titre qu'une direction retouchee.
+  const replacees = pointsVisibles().filter(repositionnee).length;
+  if (replacees) {
+    morceaux.push(replacees + ' photo(s) repositionnée(s) à la main.');
+  }
   return morceaux.join(' ');
 }
 
@@ -1279,7 +1391,7 @@ function rendreListe() {
       <img src="${srcImage(p)}" alt="">
       <div class="txt">
         <span class="nom">${i + 1}. ${echapper(p.nom)}</span>
-        <span class="meta">${texteCap(capEffectif(p))}${defini(p.cap_manuel) ? ' · fixée à la main' : ''}</span>
+        <span class="meta">${texteCap(capEffectif(p))}${defini(p.cap_manuel) ? ' · fixée à la main' : ''}${repositionnee(p) ? ' · repositionnée' : ''}</span>
         ${precisionDouteuse(p)
           ? `<span class="alerte" title="${echapper(texteAlerte(p))} — incertitude GPS annoncée par l'appareil">⚠️ ±${Math.round(p.precision_m)} m</span>`
           : ''}
@@ -1414,9 +1526,12 @@ let visee = null;     // { type: 'point' | 'temoin', id } ou null
 function armerVisee(type, id, nom) {
   visee = { type: type, id: id };
   document.body.classList.add('viser');
-  document.getElementById('banniere-visee').innerHTML =
-    '🎯 Cliquez sur la carte vers ce que regarde <b>' + echapper(nom) + '</b>' +
-    ' — <i>Échap pour annuler</i>';
+  // Replacer et viser sont deux gestes opposes : l'un designe OU EST la photo,
+  // l'autre CE QU'ELLE REGARDE. La banniere doit lever l'ambiguite.
+  document.getElementById('banniere-visee').innerHTML = (type === 'position'
+      ? "📍 Cliquez sur la carte à l'emplacement réel de <b>" + echapper(nom) + '</b>'
+      : '🎯 Cliquez sur la carte vers ce que regarde <b>' + echapper(nom) + '</b>')
+    + ' — <i>Échap pour annuler</i>';
 }
 
 function annulerVisee() {
@@ -1427,10 +1542,19 @@ function annulerVisee() {
 function traiterVisee(latlng) {
   const p = pointParId(visee.id);
   if (!p) { annulerVisee(); return; }
-  const cap = capVers(p.lat, p.lon, latlng.lat, latlng.lng);
+  const [pLat, pLon] = positionEffective(p);
+  const cap = capVers(pLat, pLon, latlng.lat, latlng.lng);
   const type = visee.type;              // relevé avant annulerVisee(), qui vide `visee`
   annulerVisee();
-  if (type === 'point') {
+  if (type === 'position') {
+    // L'origine (lat_brut/lon_brut) n'est jamais touchee : le retour en arriere
+    // reste possible, et la carte peut signaler la retouche.
+    p.lat_manuel = latlng.lat;
+    p.lon_manuel = latlng.lng;
+    const pos = positionEffective(p);
+    p.lat = pos[0]; p.lon = pos[1];
+    rendu();
+  } else if (type === 'point') {
     p.cap_manuel = cap;                 // figée : elle ne suivra plus la calibration
     rendu();
   } else {
@@ -1462,7 +1586,7 @@ function rendu() {
   if (premierRendu) {
     const visibles = pointsVisibles();
     if (visibles.length > 1) {
-      carte.fitBounds(L.latLngBounds(visibles.map(p => [p.lat, p.lon])), { padding: [60, 60] });
+      carte.fitBounds(L.latLngBounds(visibles.map(positionEffective)), { padding: [60, 60] });
     }
     premierRendu = false;
   }
@@ -1514,12 +1638,31 @@ function ouvrirModale(id) {
   document.getElementById('modale-direction').value =
     defini(p.cap_manuel) ? Math.round(p.cap_manuel) : '';
   rendreEtatDirection();
+  rendreEtatPosition();
   document.getElementById('modale').style.display = 'flex';
   document.getElementById('modale-nom').focus();
 }
 
 /* Dit à l'utilisateur ce que devient la direction selon qu'il laisse le champ
    vide (elle suit la calibration) ou qu'il y saisit une valeur (elle est figée). */
+/* Dit d'où vient l'emplacement affiché, et n'offre le retour à l'origine que
+   s'il y a quelque chose à annuler. */
+function rendreEtatPosition() {
+  const p = pointParId(idEnCours);
+  const etat = document.getElementById('modale-position-etat');
+  const auto = document.getElementById('modale-position-auto');
+  if (!p) return;
+  if (repositionnee(p)) {
+    etat.textContent = 'Replacée à la main.';
+    etat.style.color = '#ffc46b';
+    auto.hidden = false;
+  } else {
+    etat.textContent = "Emplacement d'origine, tel que détecté.";
+    etat.style.color = '';
+    auto.hidden = true;
+  }
+}
+
 function rendreEtatDirection() {
   const p = pointParId(idEnCours);
   const champ = document.getElementById('modale-direction');
@@ -1604,11 +1747,16 @@ function nomFichier(titre) {
 }
 
 function enregistrer(epurer) {
-  // Rangs remis au propre, et `cap` réécrit : c'est une valeur dérivée, elle est
-  // recalculée ici pour que les lecteurs du fichier n'aient pas à le faire.
+  // Rangs remis au propre ; `cap`, `lat` et `lon` réécrits : ce sont des valeurs
+  // dérivées, recalculées ici pour que les lecteurs du fichier n'aient pas à le
+  // faire (le réimport Python s'appuie dessus).
   const points = (epurer ? DONNEES.points.filter(p => !p.masque) : DONNEES.points)
     .slice().sort((a, b) => a.ordre - b.ordre)
-    .map((p, i) => Object.assign({}, p, { ordre: i, cap: capEffectif(p) }));
+    .map((p, i) => {
+      const pos = positionEffective(p);
+      return Object.assign({}, p, { ordre: i, cap: capEffectif(p),
+                                    lat: pos[0], lon: pos[1] });
+    });
 
   if (epurer) {
     const retirees = DONNEES.points.length - points.length;
@@ -1665,6 +1813,27 @@ document.getElementById('modale-direction-auto').onclick = function () {
 };
 // Viser depuis la fenêtre : on garde les saisies en cours avant de rendre la main
 // à la carte, sinon le nom ou le commentaire tapés seraient perdus.
+// Replacer depuis la fiche : on garde les saisies en cours avant de rendre la
+// main a la carte, sinon le nom ou le commentaire tapes seraient perdus.
+document.getElementById('modale-replacer').onclick = function () {
+  const p = pointParId(idEnCours);
+  if (!p) return;
+  appliquerModale();
+  fermerModale();
+  rendu();
+  armerVisee('position', p.id, p.nom);
+};
+
+document.getElementById('modale-position-auto').onclick = function () {
+  const p = pointParId(idEnCours);
+  if (!p) return;
+  p.lat_manuel = null; p.lon_manuel = null;
+  const pos = positionEffective(p);
+  p.lat = pos[0]; p.lon = pos[1];
+  rendreEtatPosition();
+  rendu();
+};
+
 document.getElementById('modale-viser').onclick = function () {
   const p = pointParId(idEnCours);
   if (!p) return;
@@ -1733,7 +1902,7 @@ document.getElementById('liste').addEventListener('click', function (evenement) 
   if (ligne) {
     const rang = Number(ligne.dataset.rang);
     const p = pointsVisibles()[rang];
-    carte.setView([p.lat, p.lon], Math.max(carte.getZoom(), 17));
+    carte.setView(positionEffective(p), Math.max(carte.getZoom(), 17));
     marqueurs[rang].openPopup();
   }
 });

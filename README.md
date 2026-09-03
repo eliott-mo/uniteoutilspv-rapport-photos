@@ -212,7 +212,7 @@ Le fichier réenregistré depuis le navigateur reste tout aussi autonome :
 `documentComplet()` relit les blocs Leaflet depuis la page et les réémet, comme
 il le fait déjà pour la feuille de style et le script de la carte.
 
-## Carte éditable (format version 3)
+## Carte éditable (format version 4)
 
 La carte s'ouvre en consultation. Le bouton **✏️** du panneau active le mode
 édition, où l'on peut, sans aucun outil ni serveur :
@@ -222,6 +222,7 @@ La carte s'ouvre en consultation. Le bouton **✏️** du panneau active le mode
 - **réordonner** les points (↑ / ↓) — la numérotation des marqueurs suit ;
 - **masquer** une photo : elle quitte la carte et le panneau mais reste dans le
   fichier, listée en **corbeille** avec un bouton *Rétablir* ;
+- **replacer** une photo au bon endroit (voir ci-dessous) ;
 - modifier le **titre** de la carte.
 
 Deux boutons d'enregistrement produisent un nouveau fichier HTML :
@@ -248,12 +249,45 @@ limite, sans distinction entre « original » et « déjà édité ». Vérifié
 cycles d'enregistrement successifs sans modification donnent des fichiers
 **identiques octet pour octet**.
 
-L'en-tête porte `<meta name="carte-photos-version" content="3">` et le bloc JSON
+L'en-tête porte `<meta name="carte-photos-version" content="4">` et le bloc JSON
 contient le même numéro de version. Le format de ce bloc est documenté en tête de
 `generation_html.py` — c'est lui qui **fait foi** pour le réimport (voir
 *Compléter une carte existante*), pas la structure HTML. Une carte au format 2 est
 convertie à l'ouverture comme au réimport, sans changer d'apparence
 (`cap_brut = cap`, `cap_manuel = null`, `offset = 0`).
+
+### Replacer une photo au bon endroit
+
+Une photo mal localisée — GPS dégradé, position lue de travers — se replace d'un
+clic : **📍 Replacer** dans sa fiche, puis un clic sur la carte à l'emplacement
+réel. Même geste que le 🎯 Viser des directions, mais les deux ne disent pas la
+même chose : *Replacer* désigne **où est** la photo, *Viser* **ce qu'elle
+regarde**. La bannière le rappelle pendant le geste.
+
+La position suit la même règle que le cap, et pour les mêmes raisons :
+
+| Champ | Rôle |
+|---|---|
+| `lat_brut` / `lon_brut` | position d'origine (EXIF/OCR), **jamais modifiée** |
+| `lat_manuel` / `lon_manuel` | position replacée à la main, ou `null` |
+| `lat` / `lon` | **déduites** : manuelle si définie, sinon l'origine |
+
+L'origine n'étant jamais écrasée, un bouton **« Rendre à la position d'origine »**
+annule la retouche à tout moment, et le réimport la préserve.
+
+**Le déplacement est signalé**, comme l'est une direction corrigée : mention
+« · repositionnée » sur la vignette, et comptage dans la note de la carte
+(« N photo(s) repositionnée(s) à la main »). C'est délibéré — sur un rapport de
+visite qui fait foi, déplacer une photo touche à ce qui est attesté, un lecteur
+doit pouvoir le savoir.
+
+Une photo replacée **perd son alerte de précision GPS** : l'incertitude décrivait
+la fixation d'origine, que le chargé de projet vient précisément de corriger.
+Revenir à l'origine la fait réapparaître.
+
+À noter : si le cap avait été fixé en *visant* une cible, déplacer la photo fait
+que le cône ne pointe plus vers cette cible — l'azimut est absolu. Il suffit de
+re-viser.
 
 ### Alerte de précision dans la carte
 
