@@ -1,7 +1,72 @@
-streamlit>=1.57.0
-pillow>=10.0
-pillow-heif>=0.16
-pytesseract>=0.3.10
-opencv-python-headless>=4.9
-numpy>=1.26
-pandas>=2.0
+# Dependances FIGEES — resolution complete, transitives comprises.
+#
+# CIBLE : Python 3.14 (cp314), Linux x86_64. C'est la version qu'utilise
+# reellement Streamlit Community Cloud pour les apps du parc.
+#
+# ATTENTION : Streamlit Cloud NE LIT PAS le fichier .python-version. La version
+# de Python se choisit dans les reglages de l'app, sur share.streamlit.io. Ne
+# pas se fier a ce fichier pour savoir ce qui tourne en production.
+#
+# POURQUOI FIGER. Sans plafond, le Cloud installe les dernieres versions : les
+# majeures avaient saute (opencv 4.x -> 5.x, pandas 2.x -> 3.x,
+# pillow-heif 0.x -> 1.x). L'installation reussit, mais l'app peut casser A
+# L'EXECUTION — pire qu'un echec d'install, car elle parait deployee alors
+# qu'elle dysfonctionne. Trois modules y sont directement exposes :
+# detection_cap.py (cv2), ocr_position.py (pytesseract), formats_images.py
+# (pillow_heif).
+#
+# REGENERER (apres toute modification de directes.txt) :
+#
+#   python -m pip install --dry-run --ignore-installed --only-binary=:all: #     --python-version 3.14 --implementation cp --abi cp314 #     --platform manylinux_2_17_x86_64 --platform manylinux2014_x86_64 #     --platform manylinux_2_28_x86_64 --report r.json -r directes.txt
+#
+# puis reporter ici les couples nom==version du champ "install" de r.json.
+#
+# GARDE-FOU : que cette commande REUSSISSE est la verification a refaire avant
+# chaque push. Un echec signale un paquet sans roue pour ce Python — il tenterait
+# de se compiler sur le Cloud et ferait echouer le deploiement. C'est exactement
+# ce qui a mis extraction-topo-rge et ceti-carte a l'arret (fiona, sans roue
+# cp314, reclamait GDAL). Cet outil n'a aucune dependance dans ce cas.
+#
+# Les 7 dependances directes sont dans directes.txt, avec le module qui les
+# importe. Resolution du 03/09/2026.
+
+altair==6.2.2
+anyio==4.15.0
+attrs==26.1.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+click==8.5.0
+h11==0.16.0
+httptools==0.8.0
+idna==3.19
+itsdangerous==2.2.0
+Jinja2==3.1.6
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+MarkupSafe==3.0.3
+narwhals==2.25.0
+numpy==2.5.2
+opencv-python-headless==5.0.0.93
+packaging==26.3
+pandas==3.0.5
+pillow==12.3.0
+pillow_heif==1.6.0
+protobuf==7.36.1
+pyarrow==25.0.1
+pydeck==0.9.3
+pytesseract==0.3.13
+python-dateutil==2.9.0.post0
+python-multipart==0.0.32
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.6.3
+six==1.17.0
+starlette==1.6.0
+streamlit==1.63.0
+toml==0.10.2
+typing_extensions==4.16.0
+tzdata==2026.3
+urllib3==2.7.0
+uvicorn==0.52.4
+watchdog==6.0.0
+websockets==16.1.1

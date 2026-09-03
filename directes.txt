@@ -1,0 +1,18 @@
+# Dependances DIRECTES de l'outil : celles reellement importees par le code.
+# Ce fichier est la source ; requirements.txt en est la resolution figee.
+# Voir l'en-tete de requirements.txt pour la procedure de regeneration.
+#
+#   streamlit                 app.py
+#   pillow (PIL)              app.py, generation_html.py, apercu_boussole.py
+#   pillow-heif               formats_images.py (decodage HEIC des iPhone)
+#   pytesseract               ocr_position.py (lecture de la position incrustee)
+#   opencv-python-headless    detection_cap.py (cone bleu de la vignette)
+#   numpy                     detection_cap.py
+#   pandas                    app.py (tableau de verification)
+streamlit>=1.57.0
+pillow>=10.0
+pillow-heif>=0.16
+pytesseract>=0.3.10
+opencv-python-headless>=4.9
+numpy>=1.26
+pandas>=2.0
