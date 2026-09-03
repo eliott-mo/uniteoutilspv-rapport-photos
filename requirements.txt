@@ -27,9 +27,16 @@
 # ce qui a mis extraction-topo-rge et ceti-carte a l'arret (fiona, sans roue
 # cp314, reclamait GDAL). Cet outil n'a aucune dependance dans ce cas.
 #
+#
+# CONTRAINTES DE PLATEFORME. directes.txt porte, en plus des imports du code,
+# les contraintes imposees par l hebergeur. Streamlit Cloud REFUSE pyarrow >= 25
+# (segfault connu, apache/arrow#50471) et retrograde de force a chaque
+# deploiement : on le contraint donc en amont, pour que ce fichier decrive
+# vraiment l environnement qui tourne et pour eviter un desinstall/reinstall
+# inutile a chaque demarrage.
+#
 # Les 7 dependances directes sont dans directes.txt, avec le module qui les
 # importe. Resolution du 03/09/2026.
-
 altair==6.2.2
 anyio==4.15.0
 attrs==26.1.0
@@ -52,7 +59,7 @@ pandas==3.0.5
 pillow==12.3.0
 pillow_heif==1.6.0
 protobuf==7.36.1
-pyarrow==25.0.1
+pyarrow==24.0.0
 pydeck==0.9.3
 pytesseract==0.3.13
 python-dateutil==2.9.0.post0

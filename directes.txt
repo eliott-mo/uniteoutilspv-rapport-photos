@@ -16,3 +16,10 @@ pytesseract>=0.3.10
 opencv-python-headless>=4.9
 numpy>=1.26
 pandas>=2.0
+
+# --- Contraintes de plateforme (pas des imports du code) ---
+# Streamlit Cloud REFUSE pyarrow >= 25 : il detecte un segfault connu
+# (apache/arrow#50471) et retrograde de force vers pyarrow < 25 a chaque
+# deploiement. Le contraindre ici evite d embarquer une version que la
+# plateforme considere cassee, et supprime le desinstall/reinstall inutile.
+pyarrow<25
