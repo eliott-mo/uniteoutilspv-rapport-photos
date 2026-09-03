@@ -243,6 +243,40 @@ Le marqueur, lui, reste identique aux autres : le cône est déjà porteur de se
 le surcharger nuirait à la lecture. Le champ `precision_m` voyage dans les données
 pour que l'alerte survive au réenregistrement.
 
+### Photos prises depuis un même emplacement
+
+Plusieurs déclenchements depuis un même point de station donnent des marqueurs
+**superposés** : un seul est cliquable, les autres sont inaccessibles à la souris.
+Le cas est invisible à l'œil quand les photos **n'ont pas de cône** — rien ne
+distingue alors une pile d'un marqueur isolé.
+
+Deux repères le traitent, sans jamais déplacer les points :
+
+- **Compteur sur le marqueur** — « ×3 » tant que les marqueurs se recouvrent.
+  Écrit « ×N » et non « N » pour ne pas se confondre avec le numéro de la photo.
+- **Navigateur dans la bulle** — « ‹ 2/3 photos superposées › » pour feuilleter
+  le groupe sans fermer la bulle. Disponible **en consultation** : c'est de la
+  lecture, pas une retouche.
+
+Le critère est une distance **à l'écran** (`TOLERANCE_GROUPE_PX`, 30 px), pas au
+sol, et il est **recalculé à chaque zoom**. C'est essentiel : un seuil en mètres
+serait trompeur — une fois zoomé, les photos se séparent visuellement et un
+compteur figé laisserait croire que chacune en cache encore d'autres. En zoomant,
+les groupes se scindent puis les compteurs disparaissent d'eux-mêmes.
+
+Corollaire : seules les **parties dessinées** du marqueur captent le clic
+(`pointer-events`). Sans cela, sa boîte transparente de 64×64 masquerait ses
+voisins bien avant qu'ils ne se recouvrent, et le compteur serait en retard sur
+ce que l'utilisateur voit.
+
+Le choix d'écarter les marqueurs en éventail (*spiderfy*) a été écarté : il
+déplacerait les marqueurs hors de leurs vraies coordonnées, ce qui n'est pas
+acceptable sur un rapport de visite qui fait office de preuve. Le problème n'est
+pas la visibilité mais l'accès au clic — c'est donc l'accès qui est corrigé.
+
+À noter : le panneau latéral donne **déjà** accès à n'importe quelle photo, même
+masquée derrière une autre — cliquer sa vignette ouvre sa bulle.
+
 ## Lancement en local
 
 ```bash
@@ -323,6 +357,9 @@ le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 - `app.SEUIL_LOT_MO` : poids maximal d'un lot déposé en une fois (garde-fou
   mémoire) ; complété par `maxUploadSize` dans `.streamlit/config.toml` pour le
   plafond par fichier (voir *Limite de poids d'un lot*).
+- `TOLERANCE_GROUPE_PX` (JavaScript de la carte) : distance **à l'écran** (30 px)
+  en deçà de laquelle deux marqueurs sont considérés superposés — pilote le
+  compteur « ×N » et le navigateur de la bulle. Recalculé à chaque zoom.
 - `generation_html.FONDS_DE_CARTE` : fonds disponibles (ortho IGN, Esri, plan IGN).
   Le `zoom_max` de chaque fond est le dernier niveau réellement servi ; au-delà,
   Leaflet agrandit la dernière tuile (flou, jamais gris). L'ortho IGN plafonne à

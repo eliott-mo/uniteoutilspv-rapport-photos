@@ -18,6 +18,14 @@ La calibration se fait ici plutôt que dans l'application : un décalage de
 boussole ne se juge qu'en voyant les cônes sur le fond satellite, en vérifiant
 s'ils pointent vers les bons éléments du paysage.
 
+Les photos prises depuis un même point de station donnent des marqueurs
+superposés, dont un seul est cliquable — invisible à l'œil quand elles n'ont pas
+de cône. Un compteur « ×N » sur le marqueur et un navigateur « ‹ 2/3 › » dans la
+bulle les signalent et permettent de les feuilleter, sans jamais les déplacer de
+leurs vraies coordonnées. Le regroupement se juge à l'écran et se recalcule à
+chaque zoom : en zoomant, les marqueurs se séparent et les compteurs
+disparaissent d'eux-mêmes.
+
 Principe : tout l'état vit dans le bloc JSON `#donnees-carte`, jamais dans le
 DOM. À l'enregistrement, la page reconstruit le document entier à partir de ce
 bloc, du squelette (`<template id="squelette-carte">`), de la feuille de style
@@ -491,10 +499,25 @@ _GABARIT = r"""<!DOCTYPE html>
   /* Le cône est dessiné en SVG et pivoté par CSS : il garde une taille
      constante quel que soit le niveau de zoom, contrairement à un polygone. */
   .cone-icone svg { display:block; overflow:visible; }
+  /* Seules les parties DESSINÉES du marqueur captent le clic. Sans cela, sa
+     boîte transparente de 64×64 masquerait ses voisins bien avant qu'ils ne se
+     recouvrent à l'écran, et le compteur de superposition serait en retard sur
+     ce que l'utilisateur voit. */
+  .cone-icone { pointer-events: none; }
+  .cone-icone svg > * { pointer-events: auto; }
   .popup-photo { width:270px; cursor:zoom-in; border-radius:3px; display:block; }
   .popup-titre { font-weight:600; font-size:12px; margin:6px 0 2px; }
   .popup-meta { font-size:11px; color:#555; }
   .popup-commentaire { font-size:11px; color:#1e2a38; font-style:italic; margin-top:4px; }
+  /* Feuilletage des photos prises depuis un même emplacement. Toujours visible :
+     c'est de la consultation, pas une retouche. */
+  .popup-groupe { display:flex; align-items:center; justify-content:space-between;
+                  gap:6px; margin-bottom:6px; padding:3px 5px; border-radius:3px;
+                  background:#eef2f6; color:#3a4a5c; font-size:11px; font-weight:600; }
+  .popup-groupe button { background:#d9e2ea; color:#1e2a38; border:1px solid #c3ced9;
+                         border-radius:3px; cursor:pointer; font-size:14px; line-height:1;
+                         padding:1px 8px; font-family:inherit; }
+  .popup-groupe button:hover { background:#c6d2dc; }
   /* Actions de la bulle : présentes dans le HTML de toute bulle (les bulles ne
      sont pas reconstruites). Le crayon d'édition est proposé en permanence ; la
      corbeille, elle, n'apparaît qu'en mode édition. */
@@ -903,7 +926,53 @@ document.addEventListener('visibilitychange', function () {
 
 /* Icône : un cône orienté (si le cap est connu) surmonté d'une pastille.
    La rotation est appliquée au groupe SVG, autour du centre de l'icône. */
-function iconeCone(cap, numero) {
+/* ------------------ Photos prises depuis un même emplacement ----------------
+   Plusieurs déclenchements depuis un même point de station donnent des
+   marqueurs superposés : un seul est cliquable, les autres sont inaccessibles
+   à la souris. C'est invisible à l'œil quand les photos n'ont pas de cône —
+   rien ne distingue alors une pile d'un marqueur isolé. On repère donc ces
+   groupes pour les signaler (compteur sur le marqueur) et les feuilleter
+   (navigateur dans la bulle).
+   ------------------------------------------------------------------------- */
+
+/* Le critère est une distance À L'ÉCRAN, pas au sol : deux marqueurs ne se
+   gênent que lorsqu'ils se recouvrent, ce qui dépend entièrement du zoom. Un
+   seuil en mètres serait trompeur — une fois zoomé, les photos se séparent
+   visuellement et un compteur figé laisserait croire que chacune en cache
+   encore d'autres. Le regroupement est donc recalculé à chaque zoom. */
+const TOLERANCE_GROUPE_PX = 30;
+
+/* Tableau parallèle à pointsVisibles() : pour chaque rang, la liste des rangs
+   dont le marqueur se superpose au sien (lui compris), dans l'ordre d'affichage. */
+function groupesParRang(visibles) {
+  const groupes = [], parRang = [];
+  const pixels = visibles.map(p => carte.latLngToLayerPoint([p.lat, p.lon]));
+  visibles.forEach((p, i) => {
+    const g = groupes.find(g => pixels[g[0]].distanceTo(pixels[i]) <= TOLERANCE_GROUPE_PX);
+    if (g) g.push(i); else groupes.push([i]);
+  });
+  groupes.forEach(g => g.forEach(i => { parRang[i] = g; }));
+  return parRang;
+}
+
+// Groupes du dernier calcul, réutilisés par majCones() pour ne pas perdre le
+// compteur pendant un glissement du curseur de calibration.
+let groupesRang = [];
+
+/* Recalcule les groupes et rafraîchit les compteurs. Appelé à chaque fin de
+   zoom : seules les icônes sont refaites, les bulles se recalculant, elles, à
+   l'ouverture (les rebâtir ici rejouerait les images base64 pour rien). */
+function rafraichirGroupes() {
+  const visibles = pointsVisibles();
+  groupesRang = groupesParRang(visibles);
+  visibles.forEach((p, i) => {
+    if (marqueurs[i]) {
+      marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1, groupesRang[i].length));
+    }
+  });
+}
+
+function iconeCone(cap, numero, tailleGroupe) {
   const T = 64, C = T / 2;
   let cone = '';
   if (cap !== null && cap !== undefined) {
@@ -918,12 +987,20 @@ function iconeCone(cap, numero) {
                     stroke="#ff8a00" stroke-width="1.5"/>
             </g>`;
   }
+  // Compteur « ×N » quand plusieurs photos partagent l'emplacement. Écrit en
+  // « ×N » et non « N » pour ne pas se confondre avec le numéro de la photo,
+  // porté par la pastille centrale.
+  const badge = tailleGroupe > 1 ? `
+             <rect x="${C + 3}" y="${C - 19}" width="23" height="14" rx="4"
+                   fill="#1e2a38" stroke="#fff" stroke-width="1.5"/>
+             <text x="${C + 14.5}" y="${C - 8.5}" text-anchor="middle" font-size="9"
+                   font-weight="700" fill="#fff" font-family="Arial">×${tailleGroupe}</text>` : '';
   return L.divIcon({
     className: 'cone-icone', iconSize: [T, T], iconAnchor: [C, C], popupAnchor: [0, -12],
     html: `<svg width="${T}" height="${T}">${cone}
              <circle cx="${C}" cy="${C}" r="9" fill="#d32f2f" stroke="#fff" stroke-width="2.5"/>
              <text x="${C}" y="${C + 3.5}" text-anchor="middle" font-size="10"
-                   font-weight="700" fill="#fff" font-family="Arial">${numero}</text>
+                   font-weight="700" fill="#fff" font-family="Arial">${numero}</text>${badge}
            </svg>`
   });
 }
@@ -1034,15 +1111,29 @@ function legendeBoussole(capBrut, capCorrige, offset, fige) {
          '</b></span><br>' + derniere;
 }
 
-function contenuPopup(p, numero) {
+function contenuPopup(p, numero, groupe) {
   const alerte = precisionDouteuse(p)
     ? `<div class="popup-alerte">⚠️ ${echapper(texteAlerte(p))}</div>` : '';
   const commentaire = p.commentaire
     ? `<div class="popup-commentaire">${echapper(p.commentaire)}</div>` : '';
+  // Feuilletage des photos prises depuis le même emplacement : sans lui, celles
+  // du dessous restent inatteignables au clic sur la carte. Toujours présent
+  // (pas réservé au mode édition) : c'est de la consultation, pas une retouche.
+  let navigation = '';
+  if (groupe && groupe.length > 1) {
+    const position = groupe.indexOf(numero - 1);
+    const precedent = groupe[(position - 1 + groupe.length) % groupe.length];
+    const suivant   = groupe[(position + 1) % groupe.length];
+    navigation = `<div class="popup-groupe">
+       <button type="button" data-nav="${precedent}" title="Photo précédente parmi les superposées">‹</button>
+       <span>${position + 1}/${groupe.length} photos superposées</span>
+       <button type="button" data-nav="${suivant}" title="Photo suivante parmi les superposées">›</button>
+     </div>`;
+  }
   // Les actions sont toujours écrites dans la bulle, leur visibilité relevant du
   // CSS : basculerEdition ne reconstruit pas les bulles, les conditionner ici
   // les laisserait absentes des bulles créées avant le passage en édition.
-  return `<img class="popup-photo" src="${srcImage(p)}" data-ouvrir="${numero - 1}">
+  return `${navigation}<img class="popup-photo" src="${srcImage(p)}" data-ouvrir="${numero - 1}">
      <div class="popup-titre">${numero}. ${echapper(p.nom)}</div>
      <div class="popup-meta">${p.date ? echapper(p.date) + '<br>' : ''}${texteCap(capEffectif(p))}</div>
      ${commentaire}${alerte}
@@ -1055,9 +1146,14 @@ function contenuPopup(p, numero) {
 function rendreMarqueurs() {
   coucheMarqueurs.clearLayers();
   marqueurs = [];
-  pointsVisibles().forEach((p, i) => {
-    const m = L.marker([p.lat, p.lon], { icon: iconeCone(capEffectif(p), i + 1) });
-    m.bindPopup(contenuPopup(p, i + 1), { maxWidth: 300 });
+  const visibles = pointsVisibles();
+  groupesRang = groupesParRang(visibles);
+  visibles.forEach((p, i) => {
+    const m = L.marker([p.lat, p.lon],
+                       { icon: iconeCone(capEffectif(p), i + 1, groupesRang[i].length) });
+    // Contenu calculé à l'ouverture : le regroupement dépend du zoom, une chaîne
+    // figée au rendu deviendrait fausse dès le premier zoom.
+    m.bindPopup(() => contenuPopup(p, i + 1, groupesRang[i]), { maxWidth: 300 });
     // Un clic sur un marqueur n'atteint pas la carte : pendant une visée, il
     // doit malgré tout servir de cible, sinon viser un point voisin échouerait
     // sans rien dire.
@@ -1238,7 +1334,10 @@ function reglerOffset(valeur) {
    bulles, images encodées comprises, à chaque degré parcouru. */
 function majCones() {
   pointsVisibles().forEach((p, i) => {
-    if (marqueurs[i]) marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1));
+    // Groupes du dernier rendu : le curseur ne change que les caps, jamais les
+    // positions, ils restent donc valides — et le compteur ×N survit au réglage.
+    const taille = (groupesRang[i] || [i]).length;
+    if (marqueurs[i]) marqueurs[i].setIcon(iconeCone(capEffectif(p), i + 1, taille));
   });
 }
 
@@ -1281,6 +1380,11 @@ function traiterVisee(latlng) {
 carte.on('click', function (evenement) {
   if (visee) traiterVisee(evenement.latlng);
 });
+
+// La superposition des marqueurs dépend du zoom : en zoomant, des photos
+// voisines se séparent et leur compteur doit disparaître, sans quoi il ferait
+// croire que chacune en cache encore d'autres.
+carte.on('zoomend', rafraichirGroupes);
 
 function rendu() {
   // Tout rendu sauf le tout premier fait suite à une modification (réordonner,
@@ -1580,6 +1684,14 @@ document.getElementById('liste-masquees').addEventListener('click', function (ev
 // Le sélecteur est restreint aux bulles pour ne pas empiéter sur l'écouteur de
 // #liste, qui gère les mêmes data-action.
 document.addEventListener('click', function (evenement) {
+  // Feuilletage des photos d'un même emplacement : ouvrir la bulle voisine
+  // suffit, Leaflet ferme la précédente de lui-même.
+  const nav = evenement.target.closest('.leaflet-popup button[data-nav]');
+  if (nav) {
+    const rang = Number(nav.dataset.nav);
+    if (marqueurs[rang]) marqueurs[rang].openPopup();
+    return;
+  }
   const bouton = evenement.target.closest('.leaflet-popup button[data-action]');
   if (bouton) {
     const id = Number(bouton.dataset.id);
