@@ -519,7 +519,7 @@ if en_attente:
     if not photos:
         # disabled tant que le dépassement persiste : le clic est sans effet, donc
         # aucun décodage ne démarre.
-        if st.button("▶️ Traiter les photos", type="primary", use_container_width=True,
+        if st.button("▶️ Traiter les photos", type="primary", width='stretch',
                      disabled=lot_trop_lourd):
             traiter(en_attente, remplacer=False)
     else:
@@ -527,12 +527,12 @@ if en_attente:
         st.write("**Que faire de ces nouvelles photos ?**")
         gauche, droite = st.columns(2)
         if gauche.button(f"➕ Ajouter au lot ({len(photos)} photo(s) déjà traitée(s))",
-                         type="primary", use_container_width=True,
+                         type="primary", width='stretch',
                          disabled=lot_trop_lourd,
                          help="Les photos déjà traitées sont conservées telles "
                               "quelles : elles ne sont pas réanalysées."):
             traiter(en_attente, remplacer=False)
-        if droite.button("♻️ Remplacer le lot", use_container_width=True,
+        if droite.button("♻️ Remplacer le lot", width='stretch',
                          disabled=lot_trop_lourd,
                          help="Le lot précédent est oublié, commentaires compris. "
                               "Seules les nouvelles photos sont traitées."):
@@ -545,7 +545,7 @@ if not photos:
     if ecartees:
         st.error("Aucune photo géolocalisée dans ce dépôt.")
         st.dataframe(pd.DataFrame(ecartees, columns=["Fichier", "Motif"]),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width='stretch')
     elif not fichiers:
         st.info("Déposez vos photos ou un fichier ZIP pour commencer.")
     st.stop()
@@ -584,7 +584,7 @@ if peu_fiables:
 if ecartees:
     with st.expander(f"⚠️ {len(ecartees)} photo(s) écartée(s)"):
         st.dataframe(pd.DataFrame(ecartees, columns=["Fichier", "Motif"]),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width='stretch')
 
 # --------------------------------------------------------------------------
 # Vérification photo par photo
@@ -616,7 +616,7 @@ tableau = pd.DataFrame([{
 tableau_corrige = st.data_editor(
     tableau,
     hide_index=True,
-    use_container_width=True,
+    width='stretch',
     disabled=["N°", "Fichier", "Date", "Position", "Source pos.", "Précision (m)",
               "Direction", "Confiance", "Source cap"],
     column_config={
@@ -665,7 +665,7 @@ with st.expander("👁️ Vérifier visuellement une photo"):
     )
     photo_verifiee = photos[choix]
     gauche, droite = st.columns([2, 1])
-    gauche.image(apercu(photo_verifiee["chemin"]), use_container_width=True)
+    gauche.image(apercu(photo_verifiee["chemin"]), width='stretch')
 
     # Sert à valider la DÉTECTION : le cône dessiné doit correspondre à celui de
     # la vignette incrustée. Les deux caps passés sont identiques (aucune
@@ -725,7 +725,7 @@ else:
     st.caption(f"Poids estimé du fichier : environ **{poids_estime:.1f} Mo**.")
 
 bouton = "🗺️ Compléter la carte" if html_existant else "🗺️ Générer la carte"
-if st.button(bouton, type="primary", use_container_width=True):
+if st.button(bouton, type="primary", width='stretch'):
     with st.spinner("Génération en cours…"):
         if html_existant:
             html = completer_carte(html_existant, photos, largeur_max, qualite, titre)
@@ -739,7 +739,7 @@ if st.button(bouton, type="primary", use_container_width=True):
         data=html.encode("utf-8"),
         file_name=f"{nom_fichier or 'carte'}.html",
         mime="text/html",
-        use_container_width=True,
+        width='stretch',
     )
     st.caption(
         "Ouvrez le fichier avec un navigateur (double-clic). "
