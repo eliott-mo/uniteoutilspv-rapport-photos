@@ -14,7 +14,7 @@ version : sans cette mention, rien ne permettait de dire si une carte reçue
 connaît ou non la dernière évolution — la recharger en mode « Compléter » la
 régénère avec la version courante.
 
-CARTE ÉDITABLE (format v4)
+CARTE ÉDITABLE (format v5)
 --------------------------
 La page s'ouvre en consultation. Le bouton ✏️ en haut bascule en mode édition ;
 le crayon ✎ présent sur chaque photo (liste et bulle) y bascule aussi, en
@@ -59,7 +59,7 @@ FORMAT DU BLOC `#donnees-carte` (lu au réimport)
 C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
 
     {
-      "version": 4,                  entier, suit <meta name="carte-photos-version">
+      "version": 5,                  entier, suit <meta name="carte-photos-version">
       "titre": "Visite de site",     titre de la carte, éditable dans la page
       "note": "",                    note libre ; les cartes version 2 y portaient
                                      la mention de calibration, désormais déduite
@@ -67,6 +67,11 @@ C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
       "seuil_precision_m": 20,       seuil d'alerte de précision GPS, en mètres
       "centre": [lat, lon],          cadrage initial
       "fonds": { ... },              fonds de carte disponibles (cf. FONDS_DE_CARTE)
+      "emprise": {                   périmètre du projet, ou null s'il n'y en a pas
+        "nom": "…_polygone",         couche du shapefile dont il vient
+        "poches": [[[lat, lon], …]], un anneau du shapefile par poche
+        "surface_ha": 31.95          surface nette, telle que l'annonce le SIG
+      },
       "points": [
         {
           "id": 0,                   identifiant stable, jamais réattribué
@@ -114,6 +119,22 @@ RÈGLE DU CAP (une seule, appliquée partout — Python comme JavaScript)
 `cap` est donc redondant : il est réécrit à chaque enregistrement pour que les
 lecteurs du fichier (réimport de l'étape 3) n'aient pas à refaire le calcul.
 
+EMPRISE DU SITE
+---------------
+Le périmètre du projet, importé d'un zip de shapefile par `emprise_site.py`,
+voyage dans le bloc de données et se trace en `L.polygon`. **Contour seul, sans
+remplissage** : un voile, même léger, masquerait le terrain sous les photos —
+or c'est précisément ce terrain que le rapport donne à voir.
+
+Chaque anneau du shapefile est un contour à part entière (poche disjointe ou
+trou : voir l'en-tête d'`emprise_site.py`). Les contours ne captent aucun clic
+(`interactive: false`) : sans cela, un clic tombant sur le tracé n'atteindrait
+pas la carte et la visée d'une direction échouerait sans rien dire.
+
+L'emprise n'est pas éditable dans la page — elle vient du SIG, elle s'y corrige.
+Elle survit néanmoins à tout enregistrement depuis le navigateur, comme le reste
+du bloc de données, et au réimport Python.
+
 LECTURE DES CARTES VERSION 2
 ----------------------------
 Une carte version 2 ne portait qu'un champ `cap`, offset et corrections déjà
@@ -136,15 +157,25 @@ from lecture_exif import SEUIL_PRECISION_M
 
 # Version du format de fichier. À incrémenter si la structure du bloc
 # #donnees-carte change, pour que le réimport sache à quoi il a affaire.
-VERSION_CARTE = 4
+VERSION_CARTE = 5
 
-# Version de l'outil qui produit la carte, en année.mois de mise en service.
+# Version de l'outil qui produit la carte, en année.mois de mise en service,
+# suivie d'une lettre quand le mois en compte plusieurs : 2026.09, puis
+# 2026.09.b, 2026.09.c. Le mois situe une carte, le jour exact n'apprendrait
+# rien de plus ; la lettre départage ce que le mois seul confondait — deux mises
+# en production d'un même mois portaient jusqu'ici la même estampille, alors
+# qu'elles ne produisent pas la même carte.
+#
+# La PREMIÈRE version d'un mois ne porte pas de lettre : elle vaut « a ». C'est
+# ce qui laisse lisibles les cartes déjà diffusées en 2026.09 — les renommer
+# après coup n'était pas possible, elles sont dans la nature.
+#
 # Elle est inscrite dans chaque carte (pied du panneau et balise <meta>) pour
 # répondre d'un coup d'œil à la question « cette carte est-elle à jour ? » —
 # une carte diffusée reste figée à la version qui l'a produite, et rien d'autre
 # dans le fichier ne le disait. À changer à chaque mise en production apportant
 # une différence visible pour l'utilisateur.
-VERSION_OUTIL = "2026.09"
+VERSION_OUTIL = "2026.09.b"
 
 # Fonds de carte. L'ortho IGN est la plus détaillée sur la France ;
 # Esri sert de secours et couvre le monde entier (utile en outre-mer).
@@ -322,19 +353,21 @@ def _assembler_html(donnees):
 
 
 def construire_carte(photos, titre, largeur_max=1600, qualite=80, note="",
-                     seuil_precision=SEUIL_PRECISION_M, offset=0.0):
+                     seuil_precision=SEUIL_PRECISION_M, offset=0.0, emprise=None):
     """Construit le HTML complet de la carte.
 
-    photos : liste de dictionnaires contenant au minimum
-             chemin, nom, lat, lon, cap (cap peut valoir None) ; cap_brut,
-             cap_manuel et precision_m sont repris quand ils sont présents.
-    note   : note libre affichée dans le panneau latéral. La mention de
-             calibration, elle, n'est plus transmise : la page la recalcule
-             d'après l'offset et les caps figés, et la met à jour à chaque
-             réglage.
-    offset : calibration de la boussole déjà appliquée aux caps, en degrés.
-             Transmise telle quelle pour que la page puisse la reprendre et
-             la modifier au lieu de la subir.
+    photos  : liste de dictionnaires contenant au minimum
+              chemin, nom, lat, lon, cap (cap peut valoir None) ; cap_brut,
+              cap_manuel et precision_m sont repris quand ils sont présents.
+    note    : note libre affichée dans le panneau latéral. La mention de
+              calibration, elle, n'est plus transmise : la page la recalcule
+              d'après l'offset et les caps figés, et la met à jour à chaque
+              réglage.
+    offset  : calibration de la boussole déjà appliquée aux caps, en degrés.
+              Transmise telle quelle pour que la page puisse la reprendre et
+              la modifier au lieu de la subir.
+    emprise : périmètre du projet tel que le retourne emprise_site.lire_emprise,
+              ou None. Tracé en contour seul, sous les photos.
     Retourne la chaîne HTML.
     """
     points = [_point_depuis_photo(photo, index, index, largeur_max, qualite)
@@ -352,6 +385,7 @@ def construire_carte(photos, titre, largeur_max=1600, qualite=80, note="",
         "seuil_precision_m": seuil_precision,
         "centre": centre,
         "fonds": FONDS_DE_CARTE,
+        "emprise": emprise,
         "points": points,
     }
 
@@ -420,6 +454,11 @@ def _migrer(donnees):
             point["lat_manuel"] = None
             point["lon_manuel"] = None
 
+    # v4 -> v5 : la carte peut porter l'emprise du site. Les cartes anterieures
+    # n'en ont evidemment aucune, et rien d'autre ne change pour elles.
+    if version < 5:
+        donnees["emprise"] = None
+
     # Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
     # au mieux sans pretendre l'avoir convertie.
     if version < VERSION_CARTE:
@@ -427,6 +466,7 @@ def _migrer(donnees):
 
     if not isinstance(donnees.get("offset"), (int, float)):
         donnees["offset"] = 0
+    donnees.setdefault("emprise", None)
     for point in donnees["points"]:
         point.setdefault("cap_brut", None)
         point.setdefault("cap_manuel", None)
@@ -511,7 +551,7 @@ def photos_nouvelles(donnees, photos):
 
 
 def completer_carte(html_existant, nouvelles_photos, largeur_max=1600, qualite=80,
-                    titre=None):
+                    titre=None, emprise=None, retirer_emprise=False):
     """Ajoute des photos à une carte déjà générée, sans toucher au reste.
 
     Le bloc `#donnees-carte` fait foi : on le relit, on y ajoute les points des
@@ -525,6 +565,12 @@ def completer_carte(html_existant, nouvelles_photos, largeur_max=1600, qualite=8
             réimport permet de changer — pratique pour dater une nouvelle
             version (« Visite de site — relevé du 2 août »).
 
+    emprise / retirer_emprise : l'emprise de la carte importée est conservée par
+            défaut. `emprise` la remplace ; `retirer_emprise` l'efface. Le
+            périmètre arrive souvent après la visite, ou change en cours
+            d'instruction : pouvoir le poser, le corriger ou l'ôter sur une
+            carte déjà annotée évite d'avoir à la refaire.
+
     Note, calibration, seuil de précision et fonds de carte viennent de la carte
     importée et ne sont jamais écrasés.
 
@@ -535,6 +581,13 @@ def completer_carte(html_existant, nouvelles_photos, largeur_max=1600, qualite=8
 
     if titre and str(titre).strip():
         donnees["titre"] = titre
+
+    # Le retrait l'emporte : demander les deux à la fois n'a pas de sens, et
+    # effacer est le geste dont on veut être sûr qu'il aboutit.
+    if retirer_emprise:
+        donnees["emprise"] = None
+    elif emprise is not None:
+        donnees["emprise"] = emprise
 
     # Identifiants et rangs repris à la suite : un id n'est jamais réattribué,
     # et les nouvelles photos se rangent après celles déjà présentes.
@@ -602,6 +655,13 @@ _GABARIT = r"""<!DOCTYPE html>
                    border-bottom:1px solid #2c3e50; }
   #panneau .note { font-size:11px; color:#ffc46b; padding:9px 16px; line-height:1.5;
                    background:#2a2110; border-bottom:1px solid #2c3e50; }
+  /* Emprise du site : une information, pas un avertissement — d'où le gris du
+     panneau plutôt que l'orange des notes. Le trait de la pastille reprend la
+     couleur exacte du contour tracé, pour qu'on les rapproche d'un coup d'œil. */
+  #note-emprise { font-size:11px; color:#93a5b8; padding:9px 16px; line-height:1.5;
+                  border-bottom:1px solid #2c3e50; cursor:help; }
+  #note-emprise .trait { display:inline-block; width:14px; height:0; margin-right:7px;
+                         border-top:2.5px solid #00e5ff; vertical-align:middle; }
   /* margin-top:auto colle le pied en bas du panneau tant que la liste est courte,
      et le laisse suivre le contenu dès qu'elle déborde. */
   #pied-panneau { margin-top:auto; font-size:10px; color:#6c8199; text-align:right;
@@ -799,6 +859,7 @@ _GABARIT = r"""<!DOCTYPE html>
       directions) ; pensez ensuite à enregistrer.</div>
     <div id="note" class="note" hidden></div>
     <div id="note-calibration" class="note" hidden></div>
+    <div id="note-emprise" hidden></div>
     <div id="barre-edition">
       <div class="rappel">Mode édition. Pensez à <b>Enregistrer</b> avant de fermer :
         les modifications ne sont pas sauvegardées automatiquement.</div>
@@ -920,11 +981,16 @@ function migrer(d) {
     });
   }
 
+  // v4 -> v5 : la carte peut porter l'emprise du site. Les cartes anterieures
+  // n'en ont evidemment aucune, et rien d'autre ne change pour elles.
+  if (version < 5) d.emprise = null;
+
   // Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
   // au mieux sans pretendre l'avoir convertie.
-  if (version < 4) d.version = 4;
+  if (version < 5) d.version = 5;
 
   if (typeof d.offset !== 'number') d.offset = 0;
+  if (d.emprise === undefined) d.emprise = null;
   d.points.forEach(p => {
     if (p.cap_brut === undefined)   p.cap_brut = null;
     if (p.cap_manuel === undefined) p.cap_manuel = null;
@@ -1060,6 +1126,52 @@ for (const [nom, f] of Object.entries(DONNEES.fonds)) {
 }
 L.control.layers(couches, null, { position: 'topright' }).addTo(carte);
 L.control.scale({ imperial: false }).addTo(carte);
+
+/* --------------------------- Emprise du site ---------------------------
+   Périmètre du projet, importé d'un shapefile par emprise_site.py. Tracée une
+   fois pour toutes : elle vient du SIG et ne s'édite pas dans la page.
+
+   CONTOUR SEUL, sans remplissage : un voile, même léger, masquerait le terrain
+   sous les photos — or c'est ce terrain que le rapport donne à voir.
+
+   Chaque anneau du shapefile est un contour à part entière. Le format ne
+   distingue une poche disjointe d'un trou que par le sens de parcours ; les
+   tracer séparément rend les deux cas correctement, alors qu'un unique polygone
+   ferait passer quatre poches pour une poche à trois trous.
+   ---------------------------------------------------------------------- */
+const EMPRISE_TRAIT = '#00e5ff';   // cyan : rien de tel sur une ortho, et hors de
+                                   // la famille rouge/orange des marqueurs
+const EMPRISE_LISERE = '#102030';
+
+function tracerEmprise() {
+  const emprise = DONNEES.emprise;
+  if (!emprise || !emprise.poches) return;
+  emprise.poches.forEach(function (poche) {
+    // Deux traits superposés : un liseré sombre dessous, la ligne claire
+    // dessus. C'est ce qui garde le contour lisible sur un champ clair comme
+    // sur un bois sombre — et sur le fond gris, quand il n'y a pas de réseau.
+    // interactive:false : le clic doit traverser le tracé et atteindre la
+    // carte, sans quoi viser une direction en bordure d'emprise échouerait
+    // sans rien dire.
+    [{ color: EMPRISE_LISERE, weight: 5, opacity: .45 },
+     { color: EMPRISE_TRAIT,  weight: 2.5, opacity: .95 }].forEach(function (style) {
+      L.polygon(poche, Object.assign({ fill: false, interactive: false }, style))
+        .addTo(carte);
+    });
+  });
+}
+tracerEmprise();
+
+/* Coins à faire tenir dans le cadrage initial : les photos ET l'emprise. Le
+   chargé de projet ouvre la carte pour situer ses prises de vue par rapport au
+   périmètre : n'en montrer qu'une moitié raterait la question. */
+function coinsACadrer() {
+  let coins = pointsVisibles().map(positionEffective);
+  if (DONNEES.emprise && DONNEES.emprise.poches) {
+    DONNEES.emprise.poches.forEach(function (poche) { coins = coins.concat(poche); });
+  }
+  return coins;
+}
 
 const coucheMarqueurs = L.layerGroup().addTo(carte);
 let marqueurs = [];
@@ -1402,6 +1514,27 @@ function rendreTitre() {
   vivante.hidden = !vivante.textContent;
 }
 
+/* Ligne d'information sur l'emprise. La surface est le chiffre par lequel le
+   chargé de projet reconnaît l'export de son SIG : elle est calculée dans le
+   repère du fichier source, pour tomber sur le même nombre que lui. Le nom de
+   la couche, trop long pour le panneau, est mis en infobulle. */
+function rendreEmprise() {
+  const bloc = document.getElementById('note-emprise');
+  const emprise = DONNEES.emprise;
+  if (!emprise || !emprise.poches || !emprise.poches.length) {
+    bloc.hidden = true;
+    return;
+  }
+  const surface = typeof emprise.surface_ha === 'number'
+    ? ' · ' + emprise.surface_ha.toFixed(2).replace('.', ',') + ' ha' : '';
+  bloc.innerHTML = '<span class="trait"></span>Emprise du site — ' +
+                   emprise.poches.length + ' poche(s)' + surface;
+  bloc.title = 'Contour importé de la couche « ' + (emprise.nom || 'sans nom') +
+               ' », tracé tel quel. Il ne se modifie pas ici : il vient du SIG, ' +
+               'et se corrige là-bas.';
+  bloc.hidden = false;
+}
+
 function rendreListe() {
   const liste = document.getElementById('liste');
   liste.innerHTML = '';
@@ -1600,15 +1733,16 @@ function rendu() {
   // masquer, rétablir, calibrer, éditer une fiche…) : un seul point à marquer.
   if (!premierRendu) marquerModifie();
   rendreTitre();
+  rendreEmprise();
   rendreListe();
   rendreMarqueurs();
   rendreCorbeille();
   rendreCalibration();
   rafraichirCarte();
   if (premierRendu) {
-    const visibles = pointsVisibles();
-    if (visibles.length > 1) {
-      carte.fitBounds(L.latLngBounds(visibles.map(positionEffective)), { padding: [60, 60] });
+    const coins = coinsACadrer();
+    if (coins.length > 1) {
+      carte.fitBounds(L.latLngBounds(coins), { padding: [60, 60] });
     }
     premierRendu = false;
   }

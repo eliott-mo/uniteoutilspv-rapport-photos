@@ -1,7 +1,8 @@
 # Carte des photos de terrain
 
 Génère une carte HTML interactive à partir d'un lot de photos géolocalisées :
-chaque photo est positionnée avec sa direction de prise de vue.
+chaque photo est positionnée avec sa direction de prise de vue. Le **périmètre du
+projet**, importé du SIG, peut y être tracé pour situer les prises de vue.
 
 ## Utilisation
 
@@ -11,7 +12,8 @@ chaque photo est positionnée avec sa direction de prise de vue.
    ou dans un **`.zip`**, les deux modes cohabitent. **Le dépôt ne traite rien** :
    on peut déposer en plusieurs fois, le compteur indique ce qui est en attente.
 3. Cliquer **« Traiter les photos »** pour lancer l'analyse.
-4. Vérifier les directions détectées, puis générer la carte.
+4. Vérifier les directions détectées, éventuellement déposer l'**emprise du
+   site** (voir plus bas), puis générer la carte.
 5. Ouvrir la carte et, en mode édition (**✏️**), **calibrer la boussole** sur le
    fond satellite et ajuster les directions : c'est là qu'un décalage se juge.
 
@@ -86,7 +88,9 @@ retraitées ni ré-encodées — leur base64 est repris tel quel. La calibration
 carte s'applique aussi aux directions des nouvelles photos. Le **titre** est
 pré-rempli avec celui de la carte importée et reste modifiable (pour dater une
 nouvelle version) ; note, calibration, seuil de précision et fonds de carte sont
-conservés tels quels.
+conservés tels quels. L'**emprise** l'est aussi, et peut au passage être posée,
+remplacée ou retirée : le périmètre arrive souvent après la visite, et change en
+cours d'instruction.
 
 Deux limites à connaître : une photo **renommée** dans l'éditeur a perdu son nom
 de fichier et sera réajoutée si on la redépose ; une carte réenregistrée depuis le
@@ -97,6 +101,80 @@ repassée par l'application.
 
 JPEG, PNG, WEBP, TIFF et **HEIC** (format par défaut des iPhone), ainsi que les
 ZIP contenant ces images.
+
+## Emprise du site
+
+Le périmètre du projet, tel que le SIG l'exporte : un **`.zip` de shapefile**
+(`.shp`, `.shx`, `.dbf`, `.prj`), déposé au moment de la génération. Il est tracé
+sur la carte **en contour seul, sans remplissage** — un voile, même léger,
+masquerait le terrain sous les photos, or c'est ce terrain que le rapport donne à
+voir.
+
+L'import annonce ce qu'il a lu : « *N poche(s), X ha* ». **Comparer cette surface
+à celle qu'affiche le SIG** est la façon la plus rapide de vérifier qu'on a déposé
+le bon export ; elle est calculée dans le repère du fichier source, pour tomber sur
+le même nombre que lui.
+
+### Ce que le module lit, et ce qu'il refuse
+
+| Cas | Comportement |
+|---|---|
+| Projection **Lambert-93** (RGF93, EPSG:2154) | convertie en WGS84 |
+| Projection **WGS84** en degrés | reprise telle quelle |
+| Toute autre projection | **refus**, en la nommant (« Ce shapefile est en « NTF_Lambert_II_etendu »… ») |
+| `.prj` absent | **refus** : sans projection déclarée, l'emprise serait posée au jugé |
+| Coordonnées démentant le `.prj` | **refus** : cas réel d'une couche reprojetée en degrés, exportée avec l'ancien `.prj` |
+| Plusieurs couches dans le zip | la couche **polygonale** est choisie, sur le type déclaré dans l'en-tête du `.shp` — jamais sur le nom du fichier |
+| Plusieurs couches **polygonales** | **refus** qui les nomme : l'outil ne devine pas laquelle est l'emprise |
+| Attributs du `.dbf` | **non lus** : la carte montre un contour, pas une table |
+
+La reconnaissance de la projection porte sur les **paramètres** du `.prj` —
+méridien 3°, parallèles 49 et 44, origine 46,5°, constantes 700000 / 6600000 — et
+non sur son libellé, qui varie d'un SIG à l'autre (« RGF_1993_Lambert_93 »,
+« RGF93 v1 / Lambert-93»…). Les deux écritures du WKT, ESRI et WKT2, sont
+reconnues.
+
+### Deux pièges du format, vérifiés sur fichiers réels
+
+**Un enregistrement peut porter plusieurs anneaux**, qui sont soit des poches
+disjointes, soit des trous — le format ne les distingue que par le sens de
+parcours (extérieur horaire, trou anti-horaire). Un projet réel contient un
+enregistrement à quatre anneaux tous horaires, c'est-à-dire quatre poches ; le
+passer tel quel à `L.polygon` en ferait une poche à trois trous. **Chaque anneau
+est donc tracé pour lui-même** : le rendu est juste dans les deux cas, puisqu'on
+ne dessine qu'un contour. La surface, elle, reste nette — un anneau anti-horaire
+est retranché.
+
+**Un zip peut contenir plusieurs couches** : un export livre volontiers un
+`_polygone` **et** un `_point`. Le choix se fait sur la géométrie déclarée, pas
+sur le suffixe.
+
+### Aucune dépendance géospatiale
+
+Ni `fiona`, ni `pyproj`, ni `shapely`. Le shapefile est lu avec `struct`, et la
+projection convertie par la **conique conforme de Lambert inverse** écrite à la
+main dans `emprise_site.py` (une quarantaine de lignes, math seul).
+
+C'est délibéré : `fiona` n'a pas de roue `cp314` et réclame GDAL — il a mis
+*extraction-topo-rge* et *ceti-carte* à l'arrêt sur Streamlit Cloud, où le
+déploiement échoue dès qu'un paquet doit se compiler (voir l'en-tête de
+`requirements.txt`). La conversion a été **recoupée avec pyproj** sur les deux
+fichiers de test : écart maximal 3 nanomètres, et les contours épousent les
+limites parcellaires sur l'ortho IGN au zoom 17-18.
+
+### Dans la carte
+
+Le contour est cyan (`#00e5ff`), doublé d'un liseré sombre qui le garde lisible
+sur un champ clair comme sur un bois sombre — et sur le fond gris, hors réseau.
+Il ne capte **aucun clic** (`interactive: false`) : sans cela, un clic tombant sur
+le tracé n'atteindrait pas la carte et la visée d'une direction échouerait sans
+rien dire. Le **cadrage à l'ouverture englobe les photos et l'emprise**, puisque
+c'est leur rapport que le lecteur vient regarder.
+
+Le panneau porte une ligne « ▬ Emprise du site — N poche(s) · X,XX ha », avec en
+infobulle le nom de la couche d'origine. L'emprise **ne s'édite pas dans la
+page** : elle vient du SIG, c'est là qu'elle se corrige. Elle survit en revanche
+à tout enregistrement depuis le navigateur, comme au réimport.
 
 ## Position et direction : deux cascades
 
@@ -212,7 +290,7 @@ Le fichier réenregistré depuis le navigateur reste tout aussi autonome :
 `documentComplet()` relit les blocs Leaflet depuis la page et les réémet, comme
 il le fait déjà pour la feuille de style et le script de la carte.
 
-## Carte éditable (format version 4)
+## Carte éditable (format version 5)
 
 La carte s'ouvre en consultation. Le bouton **✏️** du panneau active le mode
 édition, où l'on peut, sans aucun outil ni serveur :
@@ -249,12 +327,22 @@ limite, sans distinction entre « original » et « déjà édité ». Vérifié
 cycles d'enregistrement successifs sans modification donnent des fichiers
 **identiques octet pour octet**.
 
-L'en-tête porte `<meta name="carte-photos-version" content="4">` et le bloc JSON
+L'en-tête porte `<meta name="carte-photos-version" content="5">` et le bloc JSON
 contient le même numéro de version. Le format de ce bloc est documenté en tête de
 `generation_html.py` — c'est lui qui **fait foi** pour le réimport (voir
-*Compléter une carte existante*), pas la structure HTML. Une carte au format 2 est
-convertie à l'ouverture comme au réimport, sans changer d'apparence
-(`cap_brut = cap`, `cap_manuel = null`, `offset = 0`).
+*Compléter une carte existante*), pas la structure HTML.
+
+Les conversions sont **pas à pas**, et écrites deux fois — dans `_migrer()` côté
+Python et dans `migrer()` côté page —, une même règle des deux côtés :
+
+| Passage | Ce qui change |
+|---|---|
+| v2 → v3 | `cap` portait offset et corrections déjà appliqués : il devient `cap_brut`, avec `offset = 0`. L'apparence ne bouge pas, la carte devient calibrable. |
+| v3 → v4 | la position devient déduite, comme le cap : `lat_brut`/`lon_brut` reprennent l'existante, `lat_manuel`/`lon_manuel` sont nulles. |
+| v4 → v5 | la carte peut porter une **emprise** ; les cartes antérieures n'en ont aucune (`emprise = null`), rien d'autre ne change pour elles. |
+
+Une carte d'un format **plus récent** que celui connu est lue au mieux, avec un
+avertissement, sans prétendre l'avoir convertie.
 
 ### Savoir de quand date une carte
 
@@ -263,7 +351,7 @@ l'a produite et **reste figée à cette version**. Rafraîchir le navigateur n'y
 change rien, et rien ne distinguait à l'œil une carte de l'an dernier d'une
 carte du jour — de quoi croire qu'une nouveauté « n'apparaît pas chez soi ».
 
-Le pied du panneau porte donc la mention `Rapport photos 2026.09 · format v4` :
+Le pied du panneau porte donc la mention `Rapport photos 2026.09.b · format v5` :
 version de l'outil, puis version du format. La même information figure dans
 l'en-tête, `<meta name="carte-photos-outil">`, pour un contrôle sans ouvrir la
 carte. Une carte ancienne se met à jour en la rechargeant dans l'outil (mode
@@ -271,9 +359,14 @@ carte. Une carte ancienne se met à jour en la rechargeant dans l'outil (mode
 version courante.
 
 `VERSION_OUTIL`, en tête de `generation_html.py`, est en `année.mois` de mise en
-service — **à changer à chaque mise en production** apportant une différence
-visible pour l'utilisateur. `VERSION_CARTE`, lui, ne bouge que si la structure
-du bloc de données change.
+service, suivi d'une **lettre** quand le mois en compte plusieurs : `2026.09`,
+puis `2026.09.b`, `2026.09.c`. Le mois situe une carte, le jour exact
+n'apprendrait rien de plus ; la lettre départage ce que le mois seul confondait.
+La **première version d'un mois ne porte pas de lettre** — elle vaut « a », ce
+qui laisse lisibles les cartes déjà diffusées avant l'adoption du suffixe.
+**À changer à chaque mise en production** apportant une différence visible pour
+l'utilisateur. `VERSION_CARTE`, lui, ne bouge que si la structure du bloc de
+données change.
 
 ### Replacer une photo au bon endroit
 
@@ -411,6 +504,7 @@ le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 | `ocr_position.py` | Lecture OCR de la position incrustée + formats de coordonnées |
 | `detection_cap.py` | Détection du cône bleu dans la vignette |
 | `apercu_boussole.py` | Rose des vents (image Pillow) affichée pendant la calibration |
+| `emprise_site.py` | Lecture du zip de shapefile et conversion Lambert-93 → WGS84 (sans dépendance géospatiale) |
 | `generation_html.py` | Construction de la carte Leaflet, et relecture/complétion d'une carte existante (réimport) |
 
 ## Réglages utiles
@@ -427,6 +521,10 @@ le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 - `ocr_position.FORMATS_COORD` : formats de coordonnées reconnus par l'OCR (voir
   plus haut pour en ajouter un).
 - `ocr_position.BORNES_FRANCE` : garde-fou géographique.
+- `emprise_site.DECIMALES` : précision de sortie des contours (6 ≈ 11 cm).
+- `EMPRISE_TRAIT` / `EMPRISE_LISERE`, dans le gabarit de `generation_html.py` :
+  couleurs du contour de l'emprise. Le cyan est choisi hors de la famille
+  rouge/orange des marqueurs, pour ne pas leur faire concurrence.
 - La hauteur de la carte repose sur la chaîne `html, body, #app, #conteneur` en
   `height:100%`. **Ne pas insérer d'élément dans cette chaîne sans lui donner de
   hauteur** : Leaflet se réduirait alors à la hauteur du panneau, laissant une

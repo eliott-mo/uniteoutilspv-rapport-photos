@@ -31,6 +31,7 @@ from PIL import Image, ImageOps
 import formats_images
 import ocr_position
 from detection_cap import SEUIL_CONFIANCE
+from emprise_site import EmpriseIllisible, lire_emprise
 from lecture_exif import SEUIL_PRECISION_M
 from lecture_photo import lire_photo
 from generation_html import (CarteIllisible, completer_carte, construire_carte,
@@ -355,6 +356,14 @@ s'applique aussi aux directions des arrivantes. Le **titre** est pré-rempli ave
 celui de la carte importée et reste modifiable, pour dater la nouvelle version.
 Une photo **renommée** dans l'éditeur a perdu son nom de fichier : si vous la
 redéposez, elle sera ajoutée une seconde fois.
+
+**Emprise du site** (facultatif)
+Déposer, au moment de la génération, le **zip de shapefile** exporté du SIG pour
+tracer le **périmètre du projet** sur la carte : les prises de vue se situent
+alors par rapport à lui. Contour seul, sans remplissage, pour ne rien masquer du
+terrain. Projections acceptées : **Lambert-93** ou WGS84. Une emprise peut aussi
+être ajoutée, remplacée ou retirée sur une carte déjà annotée, en mode
+*Compléter*.
 
 **Formats acceptés**
 JPEG, PNG, WEBP, TIFF et **HEIC** (format par défaut des iPhone), ainsi que les
@@ -724,13 +733,75 @@ if donnees_existantes is not None:
 else:
     st.caption(f"Poids estimé du fichier : environ **{poids_estime:.1f} Mo**.")
 
+# --------------------------------------------------------------------------
+# Emprise du site
+# --------------------------------------------------------------------------
+# Le périmètre du projet, exporté du SIG. Il arrive souvent après la visite et
+# change en cours d'instruction : on peut donc le poser, le remplacer ou le
+# retirer, y compris sur une carte déjà annotée — sans avoir à la refaire.
+
+st.markdown("**Emprise du site** — facultatif")
+
+emprise_existante = (donnees_existantes or {}).get("emprise")
+if emprise_existante:
+    surface_existante = f"{emprise_existante['surface_ha']:.2f}".replace(".", ",")
+    st.caption(
+        f"Cette carte porte déjà l'emprise « {emprise_existante['nom']} » "
+        f"({len(emprise_existante['poches'])} poche(s), {surface_existante} ha). "
+        "Elle est conservée telle quelle ; déposez un zip pour la remplacer, ou "
+        "cochez pour la retirer."
+    )
+
+zip_emprise = st.file_uploader(
+    "Emprise du site (.zip de shapefile)",
+    type=["zip"],
+    key="emprise",
+    help="Le zip d'export de votre SIG, tel qu'il le produit (.shp, .shx, .dbf "
+         "et .prj). Projections acceptées : Lambert-93 (RGF93) ou WGS84. Seule "
+         "la couche de polygones est lue, et seule sa géométrie : les attributs "
+         "de la table ne sont pas repris. Le périmètre est tracé en contour, "
+         "sans remplissage, pour ne rien masquer du terrain.",
+)
+
+emprise = None
+emprise_refusee = False
+retirer_emprise = False
+
+if zip_emprise is not None:
+    try:
+        emprise = lire_emprise(zip_emprise)
+        surface = f"{emprise['surface_ha']:.2f}".replace(".", ",")
+        st.success(
+            f"Emprise « {emprise['nom']} » lue : "
+            f"**{len(emprise['poches'])} poche(s)**, **{surface} ha**. "
+            "Comparez avec ce qu'annonce votre SIG : c'est ainsi qu'on vérifie "
+            "d'un coup d'œil que c'est le bon export."
+        )
+    except EmpriseIllisible as erreur:
+        # Le zip est refusé, mais la carte, elle, reste générable : on bloque
+        # le bouton plutôt que de produire en silence une carte sans emprise —
+        # un message rouge au-dessus d'un bouton qui marche se rate.
+        emprise_refusee = True
+        st.error(str(erreur))
+elif emprise_existante:
+    retirer_emprise = st.checkbox(
+        "🗑️ Retirer l'emprise de cette carte",
+        help="La carte complétée n'aura plus de périmètre tracé. Les photos et "
+             "toutes les autres éditions sont conservées.",
+    )
+
+st.divider()
+
 bouton = "🗺️ Compléter la carte" if html_existant else "🗺️ Générer la carte"
-if st.button(bouton, type="primary", width='stretch'):
+if st.button(bouton, type="primary", width='stretch', disabled=emprise_refusee):
     with st.spinner("Génération en cours…"):
         if html_existant:
-            html = completer_carte(html_existant, photos, largeur_max, qualite, titre)
+            html = completer_carte(html_existant, photos, largeur_max, qualite,
+                                   titre, emprise=emprise,
+                                   retirer_emprise=retirer_emprise)
         else:
-            html = construire_carte(photos, titre, largeur_max, qualite)
+            html = construire_carte(photos, titre, largeur_max, qualite,
+                                    emprise=emprise)
 
     st.success("Carte complétée." if html_existant else "Carte générée.")
     nom_fichier = "".join(c if c.isalnum() or c in " -_" else "_" for c in titre).strip()
