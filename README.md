@@ -22,6 +22,27 @@ Toute retouche — calibration globale, correction d'une photo — se fait ensui
 dans la carte HTML : un décalage de boussole ne se voit qu'en regardant les cônes
 sur le fond satellite (voir *Carte éditable*).
 
+### Générer puis télécharger
+
+Deux boutons, deux gestes distincts : **« Générer la carte »** la produit,
+**« Télécharger »** l'enregistre. Ce n'est pas une maladresse d'interface.
+`st.download_button` réclame ses octets **au moment du rendu** — il n'accepte pas
+de fonction paresseuse. Un bouton unique imposerait donc de régénérer la carte à
+chaque rerun : chaque commentaire saisi, chaque photo consultée, chaque
+changement de qualité. Or l'encodage des photos pèse **98 %** du temps de
+génération, mesuré à ~0,8 s par photo : une visite de 40 photos figerait la page
+une trentaine de secondes, sans qu'aucun bouton n'ait été cliqué.
+
+La carte produite **reste disponible** : on peut la retélécharger sans la
+régénérer. Elle est **remplacée dès qu'un réglage change** (titre, qualité,
+photos, emprise), pour qu'on ne télécharge jamais une carte ne correspondant plus
+à ce que montre l'écran.
+
+Le fichier ne peut pas s'ouvrir tout seul dans un onglet : une page servie en
+`http(s)` ne peut ni naviguer vers `file://` — tous les navigateurs le refusent —
+ni savoir où le téléchargement a atterri. Il s'ouvre depuis le dossier des
+téléchargements, par double-clic.
+
 ### Compléter un lot déjà traité
 
 Déposer de nouvelles photos après un premier traitement ouvre deux choix :

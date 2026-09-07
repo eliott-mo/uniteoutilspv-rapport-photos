@@ -19,6 +19,7 @@ Lancement en local :  streamlit run app.py
 """
 
 import base64
+import json
 import os
 import tempfile
 import warnings
@@ -417,7 +418,8 @@ if not ocr_position.tesseract_disponible():
 # État conservé d'une interaction à l'autre. Les photos déjà traitées y restent :
 # aucun dépôt ultérieur ne peut provoquer leur réanalyse.
 for cle, valeur_initiale in [("photos", []), ("ecartees", []),
-                             ("commentaires", {}), ("version_deposoir", 0)]:
+                             ("commentaires", {}), ("version_deposoir", 0),
+                             ("carte", None)]:
     st.session_state.setdefault(cle, valeur_initiale)
 
 # Première question posée, avant même les photos : celui qui vient compléter une
@@ -432,7 +434,7 @@ mode = st.radio(
 )
 complement = mode.endswith("existante")
 
-html_existant, donnees_existantes = None, None
+html_existant, donnees_existantes, empreinte_carte = None, None, None
 if complement:
     carte_existante = st.file_uploader(
         "Carte à compléter (.html)",
@@ -453,6 +455,10 @@ if complement:
                 donnees_existantes = extraire_donnees(html_existant)
             for alerte in alertes:
                 st.warning(str(alerte.message))
+            # Repère de la carte déposée, pour la signature de génération.
+            # Son nom et son poids suffisent à la distinguer d'une autre, sans
+            # avoir à rehacher plusieurs dizaines de Mo à chaque interaction.
+            empreinte_carte = (carte_existante.name, carte_existante.size)
             st.success(
                 f"Carte « {donnees_existantes['titre']} » lue — "
                 f"{len(donnees_existantes['points'])} photo(s) déjà présente(s). "
@@ -792,6 +798,50 @@ elif emprise_existante:
 
 st.divider()
 
+# --------------------------------------------------------------------------
+# Génération
+# --------------------------------------------------------------------------
+# La carte produite est CONSERVÉE dans la session, et le bouton de
+# téléchargement vit hors du bloc du bouton de génération. Écrit à l'intérieur,
+# il disparaissait au premier clic : télécharger déclenche un rerun, le
+# `if st.button(...)` repasse à faux et emportait message, bouton et consigne.
+# Retélécharger imposait alors de tout régénérer — soit le ré-encodage de
+# toutes les photos, de loin l'opération la plus coûteuse de l'outil.
+#
+# Générer reste un GESTE EXPLICITE, en deux temps. Un bouton unique
+# « générer et télécharger » supposerait de produire la carte à chaque rerun,
+# puisque st.download_button réclame ses octets au moment du rendu et n'accepte
+# pas de fonction paresseuse : chaque commentaire saisi, chaque photo
+# consultée, chaque changement de qualité relancerait l'encodage de tout le lot.
+
+
+def signature_reglages():
+    """Ce dont dépend la carte produite. Un changement invalide la mémorisée.
+
+    Sans cette invalidation, la persistance créerait un piège pire que le défaut
+    qu'elle corrige : on téléchargerait une carte ne correspondant plus à ce que
+    montre l'écran — un titre modifié depuis, une photo ajoutée, une emprise
+    remplacée.
+
+    Une emprise REFUSÉE n'y figure pas : elle ne produit aucune sortie, elle ne
+    doit donc pas faire perdre la carte déjà générée. Le bouton de génération,
+    lui, reste désactivé tant que le zip n'est pas corrigé ou retiré.
+    """
+    return (
+        empreinte_carte,
+        titre, largeur_max, qualite,
+        json.dumps(emprise, sort_keys=True) if emprise else None,
+        retirer_emprise,
+        tuple((photo["chemin"], photo["commentaire"]) for photo in photos),
+    )
+
+
+signature = signature_reglages()
+if st.session_state["carte"] and st.session_state["carte"]["signature"] != signature:
+    # Les octets de la carte périmée sont relâchés ici : sur un gros lot, c'est
+    # plusieurs dizaines de Mo qui ne restent pas à traîner dans la session.
+    st.session_state["carte"] = None
+
 bouton = "🗺️ Compléter la carte" if html_existant else "🗺️ Générer la carte"
 if st.button(bouton, type="primary", width='stretch', disabled=emprise_refusee):
     with st.spinner("Génération en cours…"):
@@ -803,19 +853,36 @@ if st.button(bouton, type="primary", width='stretch', disabled=emprise_refusee):
             html = construire_carte(photos, titre, largeur_max, qualite,
                                     emprise=emprise)
 
-    st.success("Carte complétée." if html_existant else "Carte générée.")
     nom_fichier = "".join(c if c.isalnum() or c in " -_" else "_" for c in titre).strip()
+    st.session_state["carte"] = {
+        # Encodée une fois pour toutes : st.download_button veut des octets, les
+        # reproduire à chaque rerun rehacherait tout le fichier pour rien.
+        "octets": html.encode("utf-8"),
+        "nom_fichier": f"{nom_fichier or 'carte'}.html",
+        "complement": bool(html_existant),
+        "signature": signature,
+    }
+
+carte_prete = st.session_state["carte"]
+if carte_prete:
+    st.success("Carte complétée." if carte_prete["complement"] else "Carte générée.")
     st.download_button(
         "⬇️ Télécharger la carte HTML",
-        data=html.encode("utf-8"),
-        file_name=f"{nom_fichier or 'carte'}.html",
+        data=carte_prete["octets"],
+        file_name=carte_prete["nom_fichier"],
         mime="text/html",
         width='stretch',
     )
     st.caption(
-        "Ouvrez le fichier avec un navigateur (double-clic). "
+        f"Le fichier **{carte_prete['nom_fichier']}** part dans vos "
+        "téléchargements ; ouvrez-le avec un navigateur (double-clic). "
         "Il peut être envoyé par mail : les photos sont intégrées dedans. "
         "Le bouton ✏️ de la carte permet de la modifier directement dans le "
         "navigateur (commentaires, noms, ordre, titre, masquage) puis de "
         "l'enregistrer sous forme d'un nouveau fichier."
+    )
+    st.caption(
+        "Ce bouton reste disponible : vous pouvez retélécharger la carte sans "
+        "la régénérer. Elle est remplacée dès que vous changez un réglage "
+        "ci-dessus, pour ne jamais télécharger une carte périmée."
     )
