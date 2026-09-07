@@ -521,6 +521,33 @@ bas pour qu'un fichier surdimensionné soit refusé côté navigateur avant de
 saturer la RAM. Voir *Limite de poids d'un lot* pour le raisonnement complet et
 le second garde-fou, par lot cette fois (`app.SEUIL_LOT_MO`).
 
+### Empreinte mémoire
+
+L'hébergement a déjà coupé l'application pour dépassement. Trois postes ont été
+traités, et deux d'entre eux se défont facilement sans le savoir.
+
+**Le gabarit HTML est en ASCII, et doit le rester.** Les icônes y sont écrites
+en entités (`&#x1F4BE;`) dans le squelette, en échappements `\uXXXX` dans les
+littéraux JavaScript, en mots dans les commentaires. Python stocke une chaîne à
+largeur uniforme, dictée par son caractère le plus large : **un seul emoji fait
+passer tout le document à 4 octets par caractère**, base64 des photos compris.
+Sur 40 photos, la carte occupait 52 Mo en mémoire au lieu de 13, et son
+assemblage culminait à 130 Mo au lieu de 39. Remettre les vrais caractères « pour
+que ce soit lisible » rétablit le défaut sans que rien ne le signale — voir
+« LARGEUR DES CHAÎNES » en tête de `generation_html.py`. Le bloc de données est
+tenu en ASCII par `ensure_ascii=True`, et le titre par `_ascii_html()` : ce sont
+les deux textes qui entrent dans le document sans passer par le gabarit.
+
+**Le cache des aperçus est borné** (`max_entries`). Sans plafond, `@st.cache_data`
+gardait une image décodée (~3 Mo) par photo inspectée, sans expiration — et le
+cache de Streamlit est partagé par toutes les sessions de l'application.
+
+**Les dossiers de travail sont ramassés** à l'ouverture d'une session : ceux qui
+n'ont pas été écrits depuis 24 h partent. Une session quittée en fermant l'onglet
+laissait sinon son lot de photos derrière elle. Le délai est généreux et le
+dossier de la session courante est toujours épargné : supprimer les photos d'une
+session ouverte ferait échouer sa prochaine génération, qui les relit sur disque.
+
 ## Structure
 
 | Fichier | Rôle |

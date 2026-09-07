@@ -119,6 +119,39 @@ RÈGLE DU CAP (une seule, appliquée partout — Python comme JavaScript)
 `cap` est donc redondant : il est réécrit à chaque enregistrement pour que les
 lecteurs du fichier (réimport de l'étape 3) n'aient pas à refaire le calcul.
 
+LARGEUR DES CHAÎNES — POURQUOI CE FICHIER EST EN ASCII
+------------------------------------------------------
+Le gabarit ci-dessous n'écrit AUCUN caractère hors Latin-1 : les icônes y sont
+des entités HTML (`&#x1F4BE;`) dans le squelette, des échappements `\\uXXXX`
+dans les littéraux JavaScript, et des mots dans les commentaires. Ce n'est pas
+une coquetterie, et il ne faut pas « remettre les vrais caractères » : c'est ce
+qui tient l'empreinte mémoire de l'outil.
+
+Python stocke une chaîne à LARGEUR UNIFORME, dictée par son caractère le plus
+large : 1 octet si tout tient dans le Latin-1, 2 octets dès qu'un caractère le
+dépasse, 4 octets dès qu'un seul est astral — un emoji, par exemple. Or le
+document d'une carte, ce sont surtout des millions de caractères de base64,
+tous en pur ASCII. Six emoji dans le gabarit suffisaient donc à les faire
+stocker sur 4 octets chacun.
+
+Mesuré sur 40 photos, soit une visite ordinaire : la carte de 13 Mo occupait
+52 Mo en mémoire, et son assemblage culminait à 130 Mo — l'insertion des
+données devant élargir puis recopier l'ensemble. En ASCII, la même carte
+occupe 13 Mo et le pic tombe à 39. C'est ce dépassement qui a fait couper
+l'application par l'hébergeur.
+
+Deux entrées échappent au gabarit et sont traitées à part : le bloc de données,
+tenu en ASCII par `ensure_ascii=True` (cf. `_json_pour_html`), et le titre, qui
+va aussi dans <title> (cf. `_ascii_html`). Un commentaire de terrain orné d'un
+emoji, ou un titre « 📸 Visite », suffiraient sans cela à ramener tout le
+document à 4 octets par caractère.
+
+Rien de tout ceci ne se voit à l'écran : le navigateur affiche les mêmes
+glyphes. En revanche, un fichier réenregistré depuis la page (bouton 💾) les
+réécrit en clair — `innerHTML` resérialise les entités en caractères. C'est
+sans conséquence : la carte s'affiche pareil, et une régénération côté Python
+repart de ce gabarit-ci.
+
 EMPRISE DU SITE
 ---------------
 Le périmètre du projet, importé d'un zip de shapefile par `emprise_site.py`,
@@ -260,16 +293,40 @@ def _json_pour_html(objet):
     """Sérialise en JSON insérable dans une balise <script>.
 
     Le « < » est échappé : sans cela, un commentaire contenant « </script> »
-    fermerait la balise et casserait le fichier. La page applique exactement la
-    même transformation quand elle se réenregistre.
+    fermerait la balise et casserait le fichier.
+
+    `ensure_ascii=True` est une décision de MÉMOIRE, pas de lisibilité (voir
+    « LARGEUR DES CHAÎNES » en tête de fichier) : il garantit que le bloc de
+    données reste en ASCII quoi qu'un chargé de projet ait tapé dans un
+    commentaire ou un nom de photo. Un seul emoji collé depuis un téléphone
+    suffirait sinon à quadrupler l'empreinte mémoire du document entier.
+
+    Le JavaScript de la page, lui, s'en tient à JSON.stringify, qui n'échappe
+    pas le non-ASCII : un fichier réenregistré depuis le navigateur porte donc
+    ses accents en clair là où Python écrit leur échappement. Les deux formes
+    décrivent le même objet et se relisent l'une comme l'autre — c'est de
+    l'écriture, pas de la structure.
     """
-    return json.dumps(objet, ensure_ascii=False).replace("<", "\\u003c")
+    return json.dumps(objet, ensure_ascii=True).replace("<", "\\u003c")
 
 
 def _echapper(texte):
     """Échappement HTML minimal, identique à celui du JavaScript de la page."""
     return (str(texte).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def _ascii_html(texte):
+    """Remplace par des entités numériques tout ce qui sort du Latin-1.
+
+    Question de mémoire, pas d'affichage (voir « LARGEUR DES CHAÎNES » en tête
+    de fichier). Le titre est le seul texte saisi qui entre dans le document
+    AILLEURS que dans le bloc de données — il va aussi dans <title>, hors de
+    portée d'ensure_ascii. Un titre orné d'un emoji ferait donc à lui seul
+    passer les millions de caractères de base64 de 1 à 4 octets pièce. Le
+    navigateur affiche exactement le même glyphe dans les deux écritures.
+    """
+    return "".join(c if ord(c) <= 0xFF else "&#x%X;" % ord(c) for c in texte)
 
 
 def _cap_effectif(point, offset):
@@ -348,7 +405,8 @@ def _assembler_html(donnees):
                     .replace("__LEAFLET_JS__", js)
                     .replace("__VERSION__", str(donnees["version"]))
                     .replace("__OUTIL__", VERSION_OUTIL)
-                    .replace("__TITRE__", _echapper(donnees["titre"]))
+                    .replace("__TITRE__",
+                             _ascii_html(_echapper(donnees["titre"])))
                     .replace("__DONNEES__", _json_pour_html(donnees)))
 
 
@@ -655,9 +713,9 @@ _GABARIT = r"""<!DOCTYPE html>
                    border-bottom:1px solid #2c3e50; }
   #panneau .note { font-size:11px; color:#ffc46b; padding:9px 16px; line-height:1.5;
                    background:#2a2110; border-bottom:1px solid #2c3e50; }
-  /* Emprise du site : une information, pas un avertissement — d'où le gris du
+  /* Emprise du site : une information, pas un avertissement - d'où le gris du
      panneau plutôt que l'orange des notes. Le trait de la pastille reprend la
-     couleur exacte du contour tracé, pour qu'on les rapproche d'un coup d'œil. */
+     couleur exacte du contour tracé, pour qu'on les rapproche d'un coup d'oeil. */
   #note-emprise { font-size:11px; color:#93a5b8; padding:9px 16px; line-height:1.5;
                   border-bottom:1px solid #2c3e50; cursor:help; }
   #note-emprise .trait { display:inline-block; width:14px; height:0; margin-right:7px;
@@ -722,7 +780,7 @@ _GABARIT = r"""<!DOCTYPE html>
               cursor:pointer; font-size:14px; padding:4px 8px; line-height:1.2; }
   #btn-mode:hover { background:#3a5570; }
   /* Rappel de sauvegarde : masqué tant que rien n'a changé, révélé par .actif dès
-     la première modification. Visible dans les deux modes — c'est justement en
+     la première modification. Visible dans les deux modes - c'est justement en
      consultation, quand la barre d'édition a disparu, qu'il est le plus utile. */
   #rappel-sauvegarde { display:none; width:100%; text-align:left; cursor:pointer;
                        padding:8px 12px; border:none; border-bottom:1px solid #7a4f00;
@@ -733,7 +791,7 @@ _GABARIT = r"""<!DOCTYPE html>
   #barre-edition, #corbeille { display:none; }
   body.edition #barre-edition { display:block; }
   /* Le crayon d'édition d'une photo est toujours visible, pour entrer en édition
-     directement dessus ; réordonner (↑ ↓) et corbeille (🗑) relèvent du mode
+     directement dessus ; réordonner (haut/bas) et mise à la corbeille relèvent du mode
      édition. */
   .outils button[data-action="monter"],
   .outils button[data-action="descendre"],
@@ -751,7 +809,7 @@ _GABARIT = r"""<!DOCTYPE html>
   .outils button { background:#2c3e50; color:#e8eef4; border:none; border-radius:3px;
                    cursor:pointer; font-size:11px; padding:2px 5px; line-height:1.3; }
   .outils button:hover { background:#43607d; }
-  /* Calibration de la boussole et visée — mode édition uniquement */
+  /* Calibration de la boussole et visée - mode édition uniquement */
   #calibration { display:none; padding:10px 12px 12px; background:#1b2735;
                  border-bottom:1px solid #2c3e50; }
   body.edition #calibration { display:block; }
@@ -849,13 +907,13 @@ _GABARIT = r"""<!DOCTYPE html>
   <div id="panneau">
     <div id="entete">
       <h1 id="titre-carte"></h1>
-      <button id="btn-mode" type="button" title="Passer en mode édition">✏️</button>
+      <button id="btn-mode" type="button" title="Passer en mode édition">&#x270F;&#xFE0F;</button>
     </div>
-    <button id="rappel-sauvegarde" type="button">⚠️ Modifications non enregistrées —
-      cliquez ici, puis 💾 Enregistrer, pour créer le fichier à jour</button>
+    <button id="rappel-sauvegarde" type="button">&#x26A0;&#xFE0F; Modifications non enregistrées &#x2014;
+      cliquez ici, puis &#x1F4BE; Enregistrer, pour créer le fichier à jour</button>
     <div class="aide">Cliquez sur un point de la carte ou sur une photo de la liste.
-      Le cône indique la direction de prise de vue. Le crayon ✎ d'une photo, ou le
-      bouton ✏️ en haut, ouvre le mode édition (commentaires, noms, ordre, titre,
+      Le cône indique la direction de prise de vue. Le crayon &#x270E; d'une photo, ou le
+      bouton &#x270F;&#xFE0F; en haut, ouvre le mode édition (commentaires, noms, ordre, titre,
       directions) ; pensez ensuite à enregistrer.</div>
     <div id="note" class="note" hidden></div>
     <div id="note-calibration" class="note" hidden></div>
@@ -863,31 +921,31 @@ _GABARIT = r"""<!DOCTYPE html>
     <div id="barre-edition">
       <div class="rappel">Mode édition. Pensez à <b>Enregistrer</b> avant de fermer :
         les modifications ne sont pas sauvegardées automatiquement.</div>
-      <button id="btn-enregistrer" type="button">💾 Enregistrer</button>
-      <button id="btn-epurer" type="button">📦 Enregistrer en version épurée</button>
+      <button id="btn-enregistrer" type="button">&#x1F4BE; Enregistrer</button>
+      <button id="btn-epurer" type="button">&#x1F4E6; Enregistrer en version épurée</button>
     </div>
     <details id="calibration">
-      <summary>🧭 Calibration de la boussole</summary>
+      <summary>&#x1F9ED; Calibration de la boussole</summary>
       <div class="explication">Si tous les cônes sont décalés du même angle, c'est que la
         boussole du téléphone était mal calibrée. Réglez la correction et regardez les cônes
         tourner sur la carte : ils doivent pointer vers ce que les photos regardent.</div>
       <div id="boussole-apercu"></div>
       <div id="boussole-legende"></div>
-      <label for="temoin">Photo témoin — celle dont vous identifiez le mieux ce qu'elle regarde</label>
+      <label for="temoin">Photo témoin &#x2014; celle dont vous identifiez le mieux ce qu'elle regarde</label>
       <select id="temoin"></select>
       <label for="offset-curseur">Correction appliquée à toutes les directions (°)</label>
       <input id="offset-curseur" type="range" min="-180" max="180" step="1" value="0">
       <div class="ligne-boutons">
-        <button id="offset-moins" type="button" title="Tourner vers la gauche">↺ −5°</button>
+        <button id="offset-moins" type="button" title="Tourner vers la gauche">&#x21BA; &#x2212;5°</button>
         <button id="offset-zero" type="button" title="Remettre la correction à zéro">0</button>
-        <button id="offset-plus" type="button" title="Tourner vers la droite">↻ +5°</button>
+        <button id="offset-plus" type="button" title="Tourner vers la droite">&#x21BB; +5°</button>
         <output id="offset-valeur">0°</output>
       </div>
       <div class="deduction">
         <div class="explication">Ou laissez la correction se déduire : indiquez vers quoi la
           photo témoin regarde réellement.</div>
         <select id="temoin-cardinal">
-          <option value="">— indiquez la direction réelle —</option>
+          <option value="">&#x2014; indiquez la direction réelle &#x2014;</option>
           <option value="0">Nord</option>
           <option value="45">Nord-Est</option>
           <option value="90">Est</option>
@@ -897,7 +955,7 @@ _GABARIT = r"""<!DOCTYPE html>
           <option value="270">Ouest</option>
           <option value="315">Nord-Ouest</option>
         </select>
-        <button id="btn-viser-temoin" type="button">🎯 Ou cliquer sur la carte vers ce
+        <button id="btn-viser-temoin" type="button">&#x1F3AF; Ou cliquer sur la carte vers ce
           qu'elle regarde</button>
         <div id="deduction-resultat" hidden></div>
       </div>
@@ -923,17 +981,17 @@ _GABARIT = r"""<!DOCTYPE html>
     <label for="modale-nom">Nom affiché</label>
     <input id="modale-nom" type="text">
     <label for="modale-commentaire">Commentaire</label>
-    <textarea id="modale-commentaire" placeholder="Observation, repère, point de vigilance…"></textarea>
+    <textarea id="modale-commentaire" placeholder="Observation, repère, point de vigilance&#x2026;"></textarea>
     <label>Emplacement sur la carte</label>
     <div class="ligne-direction">
       <span id="modale-position-etat"></span>
-      <button id="modale-replacer" type="button">📍 Replacer</button>
+      <button id="modale-replacer" type="button">&#x1F4CD; Replacer</button>
     </div>
     <button id="modale-position-auto" type="button">Rendre à la position d'origine</button>
     <label for="modale-direction">Direction de prise de vue (0 = nord, 90 = est)</label>
     <div class="ligne-direction">
       <input id="modale-direction" type="number" min="0" max="359" step="1" placeholder="automatique">
-      <button id="modale-viser" type="button">🎯 Viser</button>
+      <button id="modale-viser" type="button">&#x1F3AF; Viser</button>
     </div>
     <div id="modale-direction-etat"></div>
     <button id="modale-direction-auto" type="button">Rendre à la calibration globale</button>
@@ -1022,7 +1080,7 @@ function capEffectif(p) {
 
 /* LA règle de la position, de même forme que celle du cap : une position
    replacée à la main l'emporte ; sinon c'est celle d'origine (EXIF/OCR).
-   L'origine n'est jamais écrasée — on peut revenir en arrière, et la carte sait
+   L'origine n'est jamais écrasée - on peut revenir en arrière, et la carte sait
    qu'une retouche a eu lieu. */
 function positionEffective(p) {
   if (defini(p.lat_manuel) && defini(p.lon_manuel)) return [p.lat_manuel, p.lon_manuel];
@@ -1053,7 +1111,7 @@ let modifie = false;          // modifications non encore enregistrées dans un 
 
 /* Signale qu'il reste des modifications non enregistrées. Le fichier étant un
    HTML autonome, rien n'est sauvegardé tant qu'on n'a pas téléchargé un nouveau
-   fichier (💾) : ce drapeau alimente le rappel visible et l'avertissement du
+   fichier (disquette) : ce drapeau alimente le rappel visible et l'avertissement du
    navigateur à la fermeture (beforeunload). */
 function marquerModifie() {
   modifie = true;
@@ -1101,7 +1159,7 @@ function precisionDouteuse(p) {
 }
 
 function texteAlerte(p) {
-  return 'Position peu fiable — ±' + Math.round(p.precision_m) + ' m';
+  return 'Position peu fiable \u2014 ±' + Math.round(p.precision_m) + ' m';
 }
 
 function texteCap(cap) {
@@ -1132,7 +1190,7 @@ L.control.scale({ imperial: false }).addTo(carte);
    fois pour toutes : elle vient du SIG et ne s'édite pas dans la page.
 
    CONTOUR SEUL, sans remplissage : un voile, même léger, masquerait le terrain
-   sous les photos — or c'est ce terrain que le rapport donne à voir.
+   sous les photos - or c'est ce terrain que le rapport donne à voir.
 
    Chaque anneau du shapefile est un contour à part entière. Le format ne
    distingue une poche disjointe d'un trou que par le sens de parcours ; les
@@ -1149,7 +1207,7 @@ function tracerEmprise() {
   emprise.poches.forEach(function (poche) {
     // Deux traits superposés : un liseré sombre dessous, la ligne claire
     // dessus. C'est ce qui garde le contour lisible sur un champ clair comme
-    // sur un bois sombre — et sur le fond gris, quand il n'y a pas de réseau.
+    // sur un bois sombre - et sur le fond gris, quand il n'y a pas de réseau.
     // interactive:false : le clic doit traverser le tracé et atteindre la
     // carte, sans quoi viser une direction en bordure d'emprise échouerait
     // sans rien dire.
@@ -1181,7 +1239,7 @@ let marqueurs = [];
    doit être suivie d'un invalidateSize, faute de quoi il continue de dessiner
    sur l'ancienne taille et laisse une bande grise.
    L'appel est fait deux fois : immédiatement, car c'est le seul qui soit garanti
-   (les minuteurs sont ralentis, voire suspendus, tant que l'onglet est masqué —
+   (les minuteurs sont ralentis, voire suspendus, tant que l'onglet est masqué -
    et requestAnimationFrame, lui, ne part pas du tout dans ce cas) ; puis en
    différé, pour rattraper une mise en page qui se stabilise après coup (barre de
    défilement du panneau, polices, images). */
@@ -1191,7 +1249,7 @@ function rafraichirCarte() {
 }
 
 /* Filet de sécurité principal : ResizeObserver se déclenche dès que la boîte du
-   conteneur change — y compris au tout premier calcul de mise en page, cas d'un
+   conteneur change - y compris au tout premier calcul de mise en page, cas d'un
    fichier ouvert dans un onglet d'arrière-plan. Contrairement aux minuteurs et à
    requestAnimationFrame, il ne dépend pas de la visibilité de la page.
    invalidateSize ne modifie pas la taille du conteneur : pas de boucle possible. */
@@ -1213,7 +1271,7 @@ document.addEventListener('visibilitychange', function () {
 /* ------------------ Photos prises depuis un même emplacement ----------------
    Plusieurs déclenchements depuis un même point de station donnent des
    marqueurs superposés : un seul est cliquable, les autres sont inaccessibles
-   à la souris. C'est invisible à l'œil quand les photos n'ont pas de cône —
+   à la souris. C'est invisible à l'oeil quand les photos n'ont pas de cône -
    rien ne distingue alors une pile d'un marqueur isolé. On repère donc ces
    groupes pour les signaler (compteur sur le marqueur) et les feuilleter
    (navigateur dans la bulle).
@@ -1221,13 +1279,13 @@ document.addEventListener('visibilitychange', function () {
 
 /* Le critère est une distance À L'ÉCRAN, pas au sol : deux marqueurs ne se
    gênent que lorsqu'ils se recouvrent, ce qui dépend entièrement du zoom. Un
-   seuil en mètres serait trompeur — une fois zoomé, les photos se séparent
+   seuil en mètres serait trompeur - une fois zoomé, les photos se séparent
    visuellement et un compteur figé laisserait croire que chacune en cache
    encore d'autres. Le regroupement est donc recalculé à chaque zoom.
 
    Le seuil vaut la largeur de la pastille : 18 px de rouge, 22 avec son liseré.
    En deçà, les pastilles se confondent et l'une masque réellement l'autre ;
-   au-delà, chaque marqueur se voit et se clique — un compteur n'y signalerait
+   au-delà, chaque marqueur se voit et se clique - un compteur n'y signalerait
    qu'un empêchement imaginaire, et se contredirait à l'écran (trois marqueurs
    bien distincts portant chacun « ×2 »). */
 const TOLERANCE_GROUPE_PX = 20;
@@ -1241,7 +1299,7 @@ let comptesRang = [];   // compteur à dessiner sur ce rang, ou 0
 /* Recalcule les groupes de marqueurs superposés et le compteur de chaque rang.
 
    UN SEUL compteur par groupe : en afficher un par membre donnait autant de
-   pastilles que de photos empilées — deux « ×2 » côte à côte pour une unique
+   pastilles que de photos empilées - deux « ×2 » côte à côte pour une unique
    paire, illisible et contradictoire à l'écran.
 
    Il est porté par le marqueur le plus au sud, c'est-à-dire celui que Leaflet
@@ -1311,7 +1369,7 @@ function iconeCone(cap, numero, tailleGroupe) {
 
 /* --------------------- Aperçu boussole (rose des vents) ---------------------
    Équivalent navigateur de apercu_boussole.py : mêmes couleurs, même convention
-   (0° = nord, sens horaire), même sémantique — cône gris = direction brute,
+   (0° = nord, sens horaire), même sémantique - cône gris = direction brute,
    cône orange = direction portée sur la carte, arc = rotation appliquée.
    ------------------------------------------------------------------------- */
 
@@ -1401,7 +1459,7 @@ function dessinerBoussole(capBrut, capCorrige, taille) {
 }
 
 /* `fige` : la direction de cette photo a été fixée à la main. Annoncer la
-   rotation globale serait alors faux — elle ne s'y applique pas. */
+   rotation globale serait alors faux - elle ne s'y applique pas. */
 function legendeBoussole(capBrut, capCorrige, offset, fige) {
   const sens = Math.abs(offset) < 1 ? '' : (offset > 0 ? ' vers la droite' : ' vers la gauche');
   const signe = offset > 0 ? '+' : '';
@@ -1417,7 +1475,7 @@ function legendeBoussole(capBrut, capCorrige, offset, fige) {
 
 function contenuPopup(p, numero, groupe) {
   const alerte = precisionDouteuse(p)
-    ? `<div class="popup-alerte">⚠️ ${echapper(texteAlerte(p))}</div>` : '';
+    ? `<div class="popup-alerte">\u26a0\ufe0f ${echapper(texteAlerte(p))}</div>` : '';
   const commentaire = p.commentaire
     ? `<div class="popup-commentaire">${echapper(p.commentaire)}</div>` : '';
   // Feuilletage des photos prises depuis le même emplacement : sans lui, celles
@@ -1429,9 +1487,9 @@ function contenuPopup(p, numero, groupe) {
     const precedent = groupe[(position - 1 + groupe.length) % groupe.length];
     const suivant   = groupe[(position + 1) % groupe.length];
     navigation = `<div class="popup-groupe">
-       <button type="button" data-nav="${precedent}" title="Photo précédente parmi les superposées">‹</button>
+       <button type="button" data-nav="${precedent}" title="Photo précédente parmi les superposées">\u2039</button>
        <span>${position + 1}/${groupe.length} photos superposées</span>
-       <button type="button" data-nav="${suivant}" title="Photo suivante parmi les superposées">›</button>
+       <button type="button" data-nav="${suivant}" title="Photo suivante parmi les superposées">\u203a</button>
      </div>`;
   }
   // Les actions sont toujours écrites dans la bulle, leur visibilité relevant du
@@ -1442,8 +1500,8 @@ function contenuPopup(p, numero, groupe) {
      <div class="popup-meta">${p.date ? echapper(p.date) + '<br>' : ''}${texteCap(capEffectif(p))}</div>
      ${commentaire}${alerte}
      <div class="popup-actions">
-       <button type="button" data-action="modifier" data-id="${p.id}" title="Renommer / commenter">✎</button>
-       <button type="button" data-action="masquer" data-id="${p.id}" title="Masquer (corbeille)">🗑</button>
+       <button type="button" data-action="modifier" data-id="${p.id}" title="Renommer / commenter">\u270e</button>
+       <button type="button" data-action="masquer" data-id="${p.id}" title="Masquer (corbeille)">\ud83d\uddd1</button>
      </div>`;
 }
 
@@ -1527,7 +1585,7 @@ function rendreEmprise() {
   }
   const surface = typeof emprise.surface_ha === 'number'
     ? ' · ' + emprise.surface_ha.toFixed(2).replace('.', ',') + ' ha' : '';
-  bloc.innerHTML = '<span class="trait"></span>Emprise du site — ' +
+  bloc.innerHTML = '<span class="trait"></span>Emprise du site \u2014 ' +
                    emprise.poches.length + ' poche(s)' + surface;
   bloc.title = 'Contour importé de la couche « ' + (emprise.nom || 'sans nom') +
                ' », tracé tel quel. Il ne se modifie pas ici : il vient du SIG, ' +
@@ -1548,15 +1606,15 @@ function rendreListe() {
         <span class="nom">${i + 1}. ${echapper(p.nom)}</span>
         <span class="meta">${texteCap(capEffectif(p))}${defini(p.cap_manuel) ? ' · fixée à la main' : ''}${repositionnee(p) ? ' · repositionnée' : ''}</span>
         ${precisionDouteuse(p)
-          ? `<span class="alerte" title="${echapper(texteAlerte(p))} — incertitude GPS annoncée par l'appareil">⚠️ ±${Math.round(p.precision_m)} m</span>`
+          ? `<span class="alerte" title="${echapper(texteAlerte(p))} \u2014 incertitude GPS annoncée par l'appareil">\u26a0\ufe0f ±${Math.round(p.precision_m)} m</span>`
           : ''}
         ${p.commentaire ? `<span class="commentaire">${echapper(p.commentaire)}</span>` : ''}
       </div>
       <div class="outils">
-        <button type="button" data-action="monter" data-id="${p.id}" title="Monter">↑</button>
-        <button type="button" data-action="descendre" data-id="${p.id}" title="Descendre">↓</button>
-        <button type="button" data-action="modifier" data-id="${p.id}" title="Renommer / commenter">✎</button>
-        <button type="button" data-action="masquer" data-id="${p.id}" title="Masquer (corbeille)">🗑</button>
+        <button type="button" data-action="monter" data-id="${p.id}" title="Monter">\u2191</button>
+        <button type="button" data-action="descendre" data-id="${p.id}" title="Descendre">\u2193</button>
+        <button type="button" data-action="modifier" data-id="${p.id}" title="Renommer / commenter">\u270e</button>
+        <button type="button" data-action="masquer" data-id="${p.id}" title="Masquer (corbeille)">\ud83d\uddd1</button>
       </div>`;
     liste.appendChild(ligne);
   });
@@ -1634,7 +1692,7 @@ function rendreCalibration() {
 
 /* Retour vivant commun aux trois méthodes de réglage : elles agissent toutes en
    direct, la ligne dit donc simplement où en est le témoin. Aucune correction
-   n'est « proposée » — il n'y a plus rien à valider. */
+   n'est « proposée » - il n'y a plus rien à valider. */
 function rendreDeduction() {
   const resultat = document.getElementById('deduction-resultat');
   const temoin = temoinCourant();
@@ -1684,9 +1742,9 @@ function armerVisee(type, id, nom) {
   // Replacer et viser sont deux gestes opposes : l'un designe OU EST la photo,
   // l'autre CE QU'ELLE REGARDE. La banniere doit lever l'ambiguite.
   document.getElementById('banniere-visee').innerHTML = (type === 'position'
-      ? "📍 Cliquez sur la carte à l'emplacement réel de <b>" + echapper(nom) + '</b>'
-      : '🎯 Cliquez sur la carte vers ce que regarde <b>' + echapper(nom) + '</b>')
-    + ' — <i>Échap pour annuler</i>';
+      ? "\ud83d\udccd Cliquez sur la carte à l'emplacement réel de <b>" + echapper(nom) + '</b>'
+      : '\ud83c\udfaf Cliquez sur la carte vers ce que regarde <b>' + echapper(nom) + '</b>')
+    + ' \u2014 <i>Échap pour annuler</i>';
 }
 
 function annulerVisee() {
@@ -1730,7 +1788,7 @@ carte.on('zoomend', rafraichirGroupes);
 
 function rendu() {
   // Tout rendu sauf le tout premier fait suite à une modification (réordonner,
-  // masquer, rétablir, calibrer, éditer une fiche…) : un seul point à marquer.
+  // masquer, rétablir, calibrer, éditer une fiche...) : un seul point à marquer.
   if (!premierRendu) marquerModifie();
   rendreTitre();
   rendreEmprise();
@@ -1757,7 +1815,7 @@ function basculerEdition() {
   const titre = document.getElementById('titre-carte');
   titre.contentEditable = modeEdition ? 'true' : 'false';
   const bouton = document.getElementById('btn-mode');
-  bouton.textContent = modeEdition ? '✔️' : '✏️';
+  bouton.textContent = modeEdition ? '\u2714\ufe0f' : '\u270f\ufe0f';
   bouton.title = modeEdition ? 'Quitter le mode édition' : 'Passer en mode édition';
   rafraichirCarte();
 }
@@ -1946,8 +2004,9 @@ document.getElementById('btn-enregistrer').onclick = () => enregistrer(false);
 document.getElementById('btn-epurer').onclick = () => enregistrer(true);
 
 // Le rappel ramène vers l'enregistrement : il ouvre le mode édition (où vivent
-// les boutons 💾) et met le bouton principal en évidence. C'est la réponse au
-// piège de la ✔️ qui, en quittant l'édition, fait disparaître ces boutons.
+// les boutons d'enregistrement) et met le bouton principal en évidence. C'est
+// la réponse au piège de la coche qui, en quittant l'édition, fait disparaître
+// ces boutons.
 document.getElementById('rappel-sauvegarde').onclick = function () {
   if (!modeEdition) basculerEdition();
   const enregistrer = document.getElementById('btn-enregistrer');
@@ -1958,7 +2017,7 @@ document.getElementById('rappel-sauvegarde').onclick = function () {
 // Filet de sécurité ultime : quel que soit le chemin de sortie (fermeture de
 // l'onglet, rechargement, navigation), le navigateur avertit s'il reste des
 // modifications non enregistrées. C'est ce qui empêche de perdre son travail
-// après avoir cliqué la ✔️ en croyant avoir sauvegardé.
+// après avoir cliqué la coche en croyant avoir sauvegardé.
 window.addEventListener('beforeunload', function (evenement) {
   if (!modifie) return;
   evenement.preventDefault();
@@ -2109,10 +2168,10 @@ function ouvrir(rang) {
   const p = visibles[courant];
   document.getElementById('vis-image').src = srcImage(p);
   document.getElementById('vis-legende').textContent =
-    (courant + 1) + '. ' + p.nom + '  —  ' + texteCap(capEffectif(p)) +
-    (p.date ? '  —  ' + p.date : '') +
-    (precisionDouteuse(p) ? '  —  ⚠️ ' + texteAlerte(p) : '') +
-    (p.commentaire ? '  —  ' + p.commentaire : '');
+    (courant + 1) + '. ' + p.nom + '  \u2014  ' + texteCap(capEffectif(p)) +
+    (p.date ? '  \u2014  ' + p.date : '') +
+    (precisionDouteuse(p) ? '  \u2014  \u26a0\ufe0f ' + texteAlerte(p) : '') +
+    (p.commentaire ? '  \u2014  ' + p.commentaire : '');
   vis.style.display = 'flex';
 }
 
