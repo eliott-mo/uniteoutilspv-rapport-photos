@@ -548,6 +548,14 @@ laissait sinon son lot de photos derrière elle. Le délai est généreux et le
 dossier de la session courante est toujours épargné : supprimer les photos d'une
 session ouverte ferait échouer sa prochaine génération, qui les relit sur disque.
 
+**La carte déposée en mode *Compléter* est lue en octets**, jamais décodée en
+chaîne. Le gabarit est en ASCII, mais un fichier réenregistré depuis la page ne
+l'est plus — `innerHTML` resérialise les entités en caractères — et coûterait
+donc 4 octets par caractère une fois décodé, pour un fichier dont on ne lit que
+le bloc JSON. Mesuré sur 40 photos : pic de 78 à 26 Mo, et la chaîne de 52 Mo
+n'est plus recréée à chaque interaction. `extraire_donnees()` et
+`completer_carte()` acceptent les deux formes.
+
 ## Structure
 
 | Fichier | Rôle |

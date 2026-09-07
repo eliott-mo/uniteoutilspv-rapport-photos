@@ -463,6 +463,22 @@ class CarteIllisible(ValueError):
 _OUVERTURE_DONNEES = '<script id="donnees-carte" type="application/json">'
 
 
+def _marqueurs(document):
+    """Les deux repères du bloc de données, du même type que le document.
+
+    Une carte arrive ici en TEXTE (usage courant, tests) ou en OCTETS. Les
+    octets sont la voie que prend l'application pour une carte déposée : le
+    fichier n'est alors jamais matérialisé en chaîne Python. Un document
+    réenregistré depuis le navigateur porte ses emoji en clair — `innerHTML`
+    resérialise les entités du squelette en caractères — et coûterait donc
+    4 octets par caractère une fois décodé, pour un fichier dont on ne lit que
+    le bloc JSON. Voir « LARGEUR DES CHAÎNES » en tête de fichier.
+    """
+    if isinstance(document, bytes):
+        return _OUVERTURE_DONNEES.encode("utf-8"), b"</script>"
+    return _OUVERTURE_DONNEES, "</script>"
+
+
 def _corriger_zoom_max(donnees):
     """Remet à jour le `zoom_max` des fonds de carte connus, sur place.
 
@@ -551,22 +567,35 @@ def extraire_donnees(html):
     et le premier `</script>` qui suit la balise ouvrante est bien le
     terminateur du bloc.
 
+    `html` accepte du texte ou des octets (cf. `_marqueurs`) : seul le bloc de
+    données est décodé, jamais le document entier.
+
     Lève CarteIllisible si le fichier n'est pas une carte exploitable.
     """
-    debut = html.find(_OUVERTURE_DONNEES)
+    ouverture, fermeture = _marqueurs(html)
+    debut = html.find(ouverture)
     if debut == -1:
         raise CarteIllisible(
             "Ce fichier n'est pas une carte générée par l'outil : son bloc de "
             "données est introuvable. Déposez le fichier HTML produit par cette "
             "application (ou réenregistré depuis la carte, bouton 💾)."
         )
-    debut += len(_OUVERTURE_DONNEES)
-    fin = html.find("</script>", debut)
+    debut += len(ouverture)
+    fin = html.find(fermeture, debut)
     if fin == -1:
         raise CarteIllisible("Carte abîmée : son bloc de données n'est pas refermé.")
 
     try:
         donnees = json.loads(html[debut:fin])
+    except UnicodeDecodeError:
+        # Propre aux octets : le bloc n'est même pas du texte. Le décodage
+        # tolérant d'avant masquait le problème en semant des caractères de
+        # remplacement, pour finir sur une erreur JSON qui n'en disait pas la
+        # cause.
+        raise CarteIllisible(
+            "Carte abîmée : son bloc de données n'est pas du texte lisible. "
+            "Le fichier a probablement été altéré en cours de transfert."
+        ) from None
     except json.JSONDecodeError as erreur:
         raise CarteIllisible(
             f"Carte abîmée : son bloc de données n'est pas lisible ({erreur.msg}, "
@@ -611,6 +640,9 @@ def photos_nouvelles(donnees, photos):
 def completer_carte(html_existant, nouvelles_photos, largeur_max=1600, qualite=80,
                     titre=None, emprise=None, retirer_emprise=False):
     """Ajoute des photos à une carte déjà générée, sans toucher au reste.
+
+    `html_existant` accepte du texte ou des octets : seul son bloc de données
+    est lu, le reste du fichier n'est jamais décodé.
 
     Le bloc `#donnees-carte` fait foi : on le relit, on y ajoute les points des
     photos absentes, on réémet le HTML depuis cet objet enrichi. Les points

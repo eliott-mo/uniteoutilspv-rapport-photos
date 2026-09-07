@@ -501,7 +501,13 @@ if complement:
              "ne sont ni retraitées ni dupliquées.",
     )
     if carte_existante is not None:
-        html_existant = carte_existante.getvalue().decode("utf-8", errors="replace")
+        # Gardée en OCTETS, jamais décodée : seul son bloc de données sera lu
+        # (extraire_donnees s'en charge). Une carte réenregistrée depuis le
+        # navigateur porte ses emoji en clair et coûterait, décodée, 4 octets
+        # par caractère — une cinquantaine de Mo pour un fichier de 13, à
+        # chaque interaction. Voir « LARGEUR DES CHAÎNES » dans
+        # generation_html.py.
+        html_existant = carte_existante.getvalue()
         try:
             # Lecture immédiate : mieux vaut signaler un fichier inexploitable
             # maintenant qu'après avoir traité puis encodé toutes les photos.
@@ -790,7 +796,7 @@ nb_encodees = len(a_ajouter) if donnees_existantes is not None else len(photos)
 poids_estime = nb_encodees * {1024: 0.25, 1280: 0.40, 1600: 0.75}[largeur_max]
 if donnees_existantes is not None:
     st.caption(f"Poids ajouté au fichier importé : environ **{poids_estime:.1f} Mo** "
-               f"({len(html_existant.encode('utf-8')) / 1e6:.1f} Mo actuellement).")
+               f"({len(html_existant) / 1e6:.1f} Mo actuellement).")
 else:
     st.caption(f"Poids estimé du fichier : environ **{poids_estime:.1f} Mo**.")
 
