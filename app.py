@@ -21,7 +21,9 @@ Lancement en local :  streamlit run app.py
 import base64
 import json
 import os
+import shutil
 import tempfile
+import time
 import warnings
 import zipfile
 
@@ -211,6 +213,46 @@ def compter_images(fichier):
         fichier.seek(0)          # le fichier sera relu lors de l'extraction
 
 
+# Préfixe des dossiers de travail, et âge au-delà duquel l'un d'eux est tenu
+# pour abandonné. Le délai est généreux à dessein : supprimer les photos d'une
+# session encore ouverte ferait échouer sa prochaine génération, qui les relit
+# sur le disque. Une journée entière passe donc avant qu'un dossier ne parte.
+PREFIXE_DOSSIER = "photos_carte_"
+AGE_ABANDON_H = 24
+
+
+def purger_dossiers_abandonnes(dossier_courant):
+    """Efface les dossiers de travail laissés par les sessions abandonnées.
+
+    Les photos d'un lot sont écrites dans un dossier temporaire qui survivait
+    jusqu'ici jusqu'au redémarrage de l'hébergement : une session quittée sans
+    être fermée — le cas ordinaire, on ferme un onglet — laissait son lot
+    derrière elle. Sur un conteneur qui tourne plusieurs jours, ces lots
+    s'accumulent.
+
+    Le ménage se fait à l'ouverture d'une session plutôt qu'à sa fermeture :
+    Streamlit n'offre pas de signal de fin de session sur lequel s'appuyer.
+
+    Jamais fatal : un échec de suppression (fichier verrouillé, permission
+    refusée) n'a pas à empêcher de travailler.
+    """
+    limite = time.time() - AGE_ABANDON_H * 3600
+    racine = tempfile.gettempdir()
+    try:
+        noms = os.listdir(racine)
+    except OSError:
+        return
+    for nom in noms:
+        chemin = os.path.join(racine, nom)
+        if not nom.startswith(PREFIXE_DOSSIER) or chemin == dossier_courant:
+            continue
+        try:
+            if os.path.getmtime(chemin) < limite:
+                shutil.rmtree(chemin, ignore_errors=True)
+        except OSError:
+            continue
+
+
 def dossier_de_travail():
     """Dossier temporaire du lot, créé une seule fois pour toute la session.
 
@@ -219,7 +261,12 @@ def dossier_de_travail():
     n'est encodée qu'au moment de la génération, quand la qualité est connue.
     """
     if "dossier" not in st.session_state:
-        st.session_state["dossier"] = tempfile.mkdtemp(prefix="photos_carte_")
+        dossier = tempfile.mkdtemp(prefix=PREFIXE_DOSSIER)
+        # Une session qui démarre est le bon moment pour ramasser derrière
+        # celles qui sont mortes : c'est le seul instant où l'on sait qu'un
+        # utilisateur est là, et l'opération ne coûte qu'un listage de dossier.
+        purger_dossiers_abandonnes(dossier)
+        st.session_state["dossier"] = dossier
     return st.session_state["dossier"]
 
 
@@ -287,7 +334,15 @@ def traiter(fichiers_a_traiter, remplacer):
     st.rerun()          # repart sur un affichage propre (compteur remis à zéro)
 
 
-@st.cache_data(show_spinner=False)
+# Quelques aperçus suffisent : un seul est affiché à la fois, les autres ne
+# servent qu'à revenir sans délai sur les photos qu'on vient de regarder. Sans
+# ce plafond, le cache gardait UNE IMAGE DÉCODÉE PAR PHOTO INSPECTÉE — environ
+# 3 Mo pièce, sans expiration, et partagée par toutes les sessions de l'app :
+# il ne faisait que croître tant que l'hébergement ne redémarrait pas.
+APERCUS_EN_CACHE = 4
+
+
+@st.cache_data(show_spinner=False, max_entries=APERCUS_EN_CACHE)
 def apercu(chemin, largeur_max=1200):
     """Version affichable d'une photo, quel que soit son format d'origine.
 
