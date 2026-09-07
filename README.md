@@ -38,6 +38,13 @@ régénérer. Elle est **remplacée dès qu'un réglage change** (titre, qualit�
 photos, emprise), pour qu'on ne télécharge jamais une carte ne correspondant plus
 à ce que montre l'écran.
 
+Les boutons disent cet état. Tant qu'aucune carte n'est en mémoire, le premier
+annonce ce qu'il va produire (**« Générer »**, ou **« Compléter »**) et porte la
+couleur d'appel ; dès qu'une carte existe, il devient **« Régénérer »** et passe
+en retrait, la couleur d'appel revenant au téléchargement — le geste attendu à ce
+moment-là. Un changement de réglage le ramène de lui-même sur « Générer » :
+il n'y a alors plus rien à régénérer.
+
 Le fichier ne peut pas s'ouvrir tout seul dans un onglet : une page servie en
 `http(s)` ne peut ni naviguer vers `file://` — tous les navigateurs le refusent —
 ni savoir où le téléchargement a atterri. Il s'ouvre depuis le dossier des

@@ -842,8 +842,27 @@ if st.session_state["carte"] and st.session_state["carte"]["signature"] != signa
     # plusieurs dizaines de Mo qui ne restent pas à traîner dans la session.
     st.session_state["carte"] = None
 
-bouton = "🗺️ Compléter la carte" if html_existant else "🗺️ Générer la carte"
-if st.button(bouton, type="primary", width='stretch', disabled=emprise_refusee):
+# Le libellé dit l'état : tant qu'aucune carte n'est en mémoire, il annonce ce
+# qui va être produit ; dès qu'il y en a une, il annonce qu'on la REMPLACE. La
+# vérification d'invalidation ci-dessus le remet d'elle-même sur « Générer »
+# quand un réglage a changé — il n'y a alors plus rien à régénérer.
+#
+# Le rouge suit le geste attendu plutôt que celui qui vient d'être fait : une
+# fois la carte produite, l'action principale est de la télécharger, la
+# régénération passe donc en retrait.
+carte_en_memoire = st.session_state["carte"] is not None
+if carte_en_memoire:
+    bouton = "🔄 Régénérer la carte"
+    aide_bouton = ("La carte est déjà produite et téléchargeable ci-dessous. La "
+                   "régénérer redonne le même fichier tant que rien n'a changé "
+                   "au-dessus.")
+else:
+    bouton = "🗺️ Compléter la carte" if html_existant else "🗺️ Générer la carte"
+    aide_bouton = None
+
+if st.button(bouton, key="generer", width='stretch',
+             type="secondary" if carte_en_memoire else "primary",
+             disabled=emprise_refusee, help=aide_bouton):
     with st.spinner("Génération en cours…"):
         if html_existant:
             html = completer_carte(html_existant, photos, largeur_max, qualite,
@@ -862,6 +881,11 @@ if st.button(bouton, type="primary", width='stretch', disabled=emprise_refusee):
         "complement": bool(html_existant),
         "signature": signature,
     }
+    # Repart sur un affichage propre. Le libellé et l'emphase des boutons se
+    # décident AVANT la génération : sans ce retour, on resterait un tour avec
+    # « Générer » et deux boutons rouges côte à côte, celui qui vient d'agir et
+    # celui qu'on attend. Le rerun ne régénère rien — la carte est en mémoire.
+    st.rerun()
 
 carte_prete = st.session_state["carte"]
 if carte_prete:
@@ -871,6 +895,7 @@ if carte_prete:
         data=carte_prete["octets"],
         file_name=carte_prete["nom_fichier"],
         mime="text/html",
+        type="primary",
         width='stretch',
     )
     st.caption(
