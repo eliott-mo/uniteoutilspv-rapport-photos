@@ -2,4 +2,5 @@
 *.pyc
 .streamlit/secrets.toml
 Photos validation.zip
+Photos validation/
 *.html

@@ -386,6 +386,13 @@ carte. Une carte ancienne se met à jour en la rechargeant dans l'outil (mode
 **Compléter**, sans ajouter de photo) : le fichier produit est régénéré par la
 version courante.
 
+**L'application affiche la même estampille sous son titre**, dès l'ouverture.
+C'est la réponse à la question qui suit chaque mise en production — « est-ce que
+ma modification est en ligne ? » : le redéploiement de l'hébergeur n'est ni
+instantané ni annoncé, et il fallait jusqu'ici générer une carte pour le savoir.
+Comparer les deux mentions dit si une carte reçue a été faite avec la version
+qui tourne aujourd'hui.
+
 `VERSION_OUTIL`, en tête de `generation_html.py`, est en `année.mois` de mise en
 service, suivi d'une **lettre** quand le mois en compte plusieurs : `2026.09`,
 puis `2026.09.b`, `2026.09.c`. Le mois situe une carte, le jour exact
@@ -395,6 +402,25 @@ qui laisse lisibles les cartes déjà diffusées avant l'adoption du suffixe.
 **À changer à chaque mise en production** apportant une différence visible pour
 l'utilisateur. `VERSION_CARTE`, lui, ne bouge que si la structure du bloc de
 données change.
+
+### Cadrage à l'ouverture
+
+La vue initiale fait tenir les photos **et l'emprise** : c'est leur rapport que
+le lecteur vient regarder.
+
+Ce cadrage ne peut pas se calculer sur un conteneur de taille nulle — Leaflet
+cherche alors le zoom qui ferait tenir les points dans du vide et répond par son
+maximum, si bien que la carte s'ouvre pleine zoom sur rien. Le cas n'est pas
+théorique : un fichier ouvert dans un **onglet d'arrière-plan**, ou restauré avec
+la session du navigateur, n'a aucune mise en page tant qu'on ne l'a pas regardé,
+et sa fenêtre y mesure 0 × 0.
+
+`cadrerInitial()` attend donc une vraie mesure, et trois filets le rappellent :
+le `ResizeObserver`, le retour de visibilité de l'onglet et le minuteur différé.
+Le premier des trois qui trouve une taille cadre, les autres repassent sans rien
+faire. **Une fois cadré, plus jamais** : la vue appartient alors au lecteur, et
+la lui reprendre à chaque redimensionnement de fenêtre serait pire que le défaut
+corrigé.
 
 ### Replacer une photo au bon endroit
 

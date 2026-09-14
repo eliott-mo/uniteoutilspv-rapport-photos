@@ -37,7 +37,8 @@ from detection_cap import SEUIL_CONFIANCE
 from emprise_site import EmpriseIllisible, lire_emprise
 from lecture_exif import SEUIL_PRECISION_M
 from lecture_photo import lire_photo
-from generation_html import (CarteIllisible, completer_carte, construire_carte,
+from generation_html import (CarteIllisible, VERSION_CARTE, VERSION_OUTIL,
+                             completer_carte, construire_carte,
                              extraire_donnees, photos_nouvelles)
 from apercu_boussole import boussole
 
@@ -377,6 +378,19 @@ with _col_titre:
     st.caption(
         "Transforme un lot de photos de terrain en carte interactive : "
         "position, direction de prise de vue et photo agrandissable."
+    )
+    # Version affichée dès l'ouverture, et pas seulement au pied des cartes
+    # produites : savoir ce qui tourne ne devait pas coûter une génération.
+    # C'est la question posée après chaque mise en production — « est-ce que
+    # ma nouveauté est en ligne ? » —, et le redéploiement de l'hébergeur n'est
+    # ni instantané ni annoncé.
+    st.caption(
+        f"Version **{VERSION_OUTIL}** · format de carte **v{VERSION_CARTE}**",
+        help="Version de l'outil qui tourne ici. Les cartes produites portent "
+             "la même estampille au pied de leur panneau : comparer les deux "
+             "dit si une carte reçue a été faite avec la version courante, ou "
+             "s'il faut la recharger en mode « Compléter » pour la mettre à "
+             "jour.",
     )
 with _col_logo:
     if _logo_b64:

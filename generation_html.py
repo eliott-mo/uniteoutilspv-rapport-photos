@@ -1138,6 +1138,10 @@ document.getElementById('app').innerHTML =
 
 let modeEdition = false;
 let premierRendu = true;
+// Le cadrage initial est un geste a part, qui ne peut aboutir QUE si la carte
+// a une taille. Il lui faut donc son propre drapeau : premierRendu, lui, tombe
+// des le premier passage, qu'il ait cadre quelque chose ou non.
+let cadrageFait = false;
 let courant = 0;              // index dans la liste visible, pour la visionneuse
 let modifie = false;          // modifications non encore enregistrées dans un fichier
 
@@ -1277,7 +1281,7 @@ let marqueurs = [];
    défilement du panneau, polices, images). */
 function rafraichirCarte() {
   carte.invalidateSize();
-  setTimeout(() => carte.invalidateSize(), 0);
+  setTimeout(() => { carte.invalidateSize(); cadrerInitial(); }, 0);
 }
 
 /* Filet de sécurité principal : ResizeObserver se déclenche dès que la boîte du
@@ -1286,7 +1290,7 @@ function rafraichirCarte() {
    requestAnimationFrame, il ne dépend pas de la visibilité de la page.
    invalidateSize ne modifie pas la taille du conteneur : pas de boucle possible. */
 if (window.ResizeObserver) {
-  new ResizeObserver(() => carte.invalidateSize())
+  new ResizeObserver(() => { carte.invalidateSize(); cadrerInitial(); })
     .observe(document.getElementById('carte'));
 }
 
@@ -1295,7 +1299,7 @@ if (window.ResizeObserver) {
 // laisserait sur l'ancienne taille. Ces deux écoutes reprennent la main.
 window.addEventListener('resize', rafraichirCarte);
 document.addEventListener('visibilitychange', function () {
-  if (document.visibilityState === 'visible') rafraichirCarte();
+  if (document.visibilityState === 'visible') { rafraichirCarte(); cadrerInitial(); }
 });
 
 /* Icône : un cône orienté (si le cap est connu) surmonté d'une pastille.
@@ -1818,6 +1822,34 @@ carte.on('click', function (evenement) {
 // croire que chacune en cache encore d'autres.
 carte.on('zoomend', rafraichirGroupes);
 
+/* Cadrage initial : faire tenir les photos ET l'emprise dans la vue.
+
+   IL NE PEUT PAS SE CALCULER SUR UN CONTENEUR DE TAILLE NULLE. Leaflet cherche
+   alors le zoom qui ferait tenir les points dans du vide, et repond par son
+   maximum : la carte s'ouvre pleine zoom sur rien. Le cas n'a rien de
+   theorique - un fichier ouvert dans un onglet d'arriere-plan, ou restaure
+   avec la session du navigateur, n'a aucune mise en page tant qu'on ne l'a pas
+   regarde, et sa fenetre y mesure 0 par 0.
+
+   D'ou l'attente d'une vraie mesure, et les rappels depuis le ResizeObserver,
+   le retour de visibilite et le minuteur differe : le premier des trois qui
+   trouve une taille cadre, les autres repassent sans rien faire.
+
+   Une fois cadre, plus jamais : la vue appartient alors au lecteur, et la lui
+   reprendre a chaque redimensionnement de fenetre serait pire que le defaut
+   corrige. */
+function cadrerInitial() {
+  if (cadrageFait) return;
+  const taille = carte.getSize();
+  if (!taille.x || !taille.y) return;
+  const coins = coinsACadrer();
+  if (coins.length > 1) {
+    carte.fitBounds(L.latLngBounds(coins), { padding: [60, 60] });
+  }
+  cadrageFait = true;
+}
+
+
 function rendu() {
   // Tout rendu sauf le tout premier fait suite à une modification (réordonner,
   // masquer, rétablir, calibrer, éditer une fiche...) : un seul point à marquer.
@@ -1830,10 +1862,7 @@ function rendu() {
   rendreCalibration();
   rafraichirCarte();
   if (premierRendu) {
-    const coins = coinsACadrer();
-    if (coins.length > 1) {
-      carte.fitBounds(L.latLngBounds(coins), { padding: [60, 60] });
-    }
+    cadrerInitial();
     premierRendu = false;
   }
 }
