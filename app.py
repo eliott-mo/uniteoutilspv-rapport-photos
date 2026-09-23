@@ -36,7 +36,8 @@ import ocr_position
 from detection_cap import SEUIL_CONFIANCE
 from emprise_site import EmpriseIllisible, lire_emprise
 from lecture_exif import SEUIL_PRECISION_M
-from lecture_photo import lire_photo
+from lecture_photo import lire_photo, lire_photo_positionnee
+from ocr_position import interpreter_saisie, position_valide
 from generation_html import (CarteIllisible, VERSION_CARTE, VERSION_OUTIL,
                              completer_carte, construire_carte,
                              extraire_donnees, photos_nouvelles)
@@ -172,7 +173,12 @@ def analyser(chemins, barre_progression):
 
         lecture = lire_photo(chemin)
         if lecture["lat"] is None:
-            ecartees.append((os.path.basename(chemin), lecture["message"]))
+            # Le CHEMIN est conservé : sans lui, une photo écartée serait
+            # perdue pour de bon, alors que le chargé de projet peut encore lui
+            # donner sa position (voir panneau_ecartees).
+            ecartees.append({"chemin": chemin,
+                             "nom": os.path.basename(chemin),
+                             "motif": lecture["message"]})
             continue
 
         exploitables.append({
@@ -335,6 +341,130 @@ def traiter(fichiers_a_traiter, remplacer):
     st.rerun()          # repart sur un affichage propre (compteur remis à zéro)
 
 
+def photo_repechee(ecartee, lat, lon):
+    """Bâtit l'enregistrement d'une photo dont la position vient d'être saisie.
+
+    Même forme que celle d'analyser() : la photo rejoint le lot sans que rien
+    d'autre ne la distingue, hormis sa source de position.
+    """
+    lecture = lire_photo_positionnee(ecartee["chemin"], lat, lon)
+    return {
+        "chemin": ecartee["chemin"],
+        "nom": ecartee["nom"],
+        "lat": lecture["lat"],
+        "lon": lecture["lon"],
+        "source_position": lecture["source_position"],
+        "precision_m": lecture["precision_m"],
+        "cap_brut": lecture["cap"],
+        "confiance": lecture["confiance"],
+        "source_cap": lecture["source_cap"],
+        "date": lecture["date"],
+        "date_texte": lecture["date"].strftime("%d/%m/%Y %H:%M") if lecture["date"] else "",
+    }
+
+
+def repecher(retenues):
+    """Réintègre au lot les photos dont la position vient d'être saisie."""
+    anciennes = st.session_state["photos"]
+    with st.spinner("Lecture des directions…"):
+        nouvelles = [photo_repechee(ecartee, lat, lon)
+                     for ecartee, (lat, lon) in retenues]
+
+    photos = anciennes + nouvelles
+    # Même tri que partout ailleurs : l'ordre de parcours du terrain.
+    photos.sort(key=lambda p: (p["date"] is None, p["date"], p["nom"]))
+    st.session_state["commentaires"] = reporter_saisies(
+        anciennes, photos, st.session_state["commentaires"])
+    st.session_state["photos"] = photos
+
+    repechees = {ecartee["chemin"] for ecartee, _ in retenues}
+    st.session_state["ecartees"] = [e for e in st.session_state["ecartees"]
+                                    if e["chemin"] not in repechees]
+    # Nouvelle key pour le tableau : sans cela, Streamlit lui rendrait les
+    # saisies de l'exécution précédente, désormais sans rapport avec ses lignes.
+    st.session_state["version_ecartees"] += 1
+    st.rerun()
+
+
+def panneau_ecartees():
+    """Tableau des photos écartées, où leur position peut être saisie.
+
+    Une photo est écartée faute de position, jamais faute de qualité : le chargé
+    de projet, lui, sait souvent où elle a été prise. Lui rendre ce canal évite
+    de renoncer à une vue simplement parce que l'application photo n'a rien
+    inscrit — cas courant des captures d'écran, des photos recadrées et des
+    appareils sans GPS.
+
+    Le tableau sert aussi quand AUCUNE photo n'a pu être placée : c'est même là
+    qu'il compte le plus, puisqu'il n'y a alors rien d'autre à faire.
+    """
+    ecartees = st.session_state["ecartees"]
+    st.caption(
+        "Si vous savez où une photo a été prise, indiquez-le dans la colonne "
+        "**Position**. Le plus simple : dans Google Maps, clic droit sur le "
+        "point — la première ligne du menu est le couple de coordonnées, un "
+        "clic le copie. Sont aussi acceptés « Lat … Long … » et les "
+        "degrés-minutes-secondes. La direction de prise de vue, elle, est "
+        "relue automatiquement, puis s'ajuste dans la carte."
+    )
+
+    tableau = st.data_editor(
+        pd.DataFrame([{"Fichier": e["nom"], "Motif": e["motif"], "Position": ""}
+                      for e in ecartees]),
+        hide_index=True,
+        width='stretch',
+        disabled=["Fichier", "Motif"],
+        column_config={
+            "Motif": st.column_config.TextColumn("Motif", width="large"),
+            "Position": st.column_config.TextColumn(
+                "Position", width="medium",
+                help="Latitude puis longitude, par exemple « 48.123456, 2.345678 ». "
+                     "Laissée vide, la photo reste écartée."),
+        },
+        key=f"editeur_ecartees_{st.session_state['version_ecartees']}",
+    )
+
+    retenues, refus = [], []
+    for rang, ligne in tableau.iterrows():
+        # pd.isna plutot que `or ""` : une cellule VIDEE par l'utilisateur
+        # revient en NaN, que `or ""` transformerait en la chaine « nan » — et
+        # la ligne serait refusee avec un message absurde alors qu'elle est
+        # simplement laissee de cote.
+        valeur = ligne["Position"]
+        texte = "" if pd.isna(valeur) else str(valeur).strip()
+        if not texte:
+            continue
+        couple = interpreter_saisie(texte)
+        if couple is None:
+            refus.append(
+                f"**{ligne['Fichier']}** — « {texte} » n'est pas une position "
+                "lisible. Attendu : deux nombres décimaux, latitude puis "
+                "longitude."
+            )
+        elif not position_valide(*couple):
+            # Le garde-fou vaut pour la saisie comme pour l'EXIF et l'OCR : une
+            # coordonnée hors bornes n'est jamais portée sur la carte. Le cas le
+            # plus fréquent est l'inversion des deux valeurs, d'où le rappel.
+            refus.append(
+                f"**{ligne['Fichier']}** — {couple[0]:.6f}, {couple[1]:.6f} "
+                "tombe hors de France métropolitaine. Latitude et longitude "
+                "sont-elles dans le bon ordre ?"
+            )
+        else:
+            retenues.append((ecartees[rang], couple))
+
+    for message in refus:
+        st.error(message)
+
+    if retenues:
+        detail = ", ".join(f"{e['nom']} → {lat:.6f}, {lon:.6f}"
+                           for e, (lat, lon) in retenues)
+        st.success(f"**{len(retenues)} position(s) comprise(s).** {detail}")
+        if st.button(f"➕ Ajouter {len(retenues)} photo(s) au lot",
+                     type="primary", width='stretch', key="ajouter_repechees"):
+            repecher(retenues)
+
+
 # Quelques aperçus suffisent : un seul est affiché à la fois, les autres ne
 # servent qu'à revenir sans délai sur les photos qu'on vient de regarder. Sans
 # ce plafond, le cache gardait UNE IMAGE DÉCODÉE PAR PHOTO INSPECTÉE — environ
@@ -488,7 +618,7 @@ if not ocr_position.tesseract_disponible():
 # aucun dépôt ultérieur ne peut provoquer leur réanalyse.
 for cle, valeur_initiale in [("photos", []), ("ecartees", []),
                              ("commentaires", {}), ("version_deposoir", 0),
-                             ("carte", None)]:
+                             ("version_ecartees", 0), ("carte", None)]:
     st.session_state.setdefault(cle, valeur_initiale)
 
 # Première question posée, avant même les photos : celui qui vient compléter une
@@ -634,8 +764,7 @@ if not photos:
     # et non son contenu — qui dit à l'utilisateur ce qui s'est passé.
     if ecartees:
         st.error("Aucune photo géolocalisée dans ce dépôt.")
-        st.dataframe(pd.DataFrame(ecartees, columns=["Fichier", "Motif"]),
-                     hide_index=True, width='stretch')
+        panneau_ecartees()
     elif not fichiers:
         st.info("Déposez vos photos ou un fichier ZIP pour commencer.")
     st.stop()
@@ -672,9 +801,11 @@ if peu_fiables:
     )
 
 if ecartees:
-    with st.expander(f"⚠️ {len(ecartees)} photo(s) écartée(s)"):
-        st.dataframe(pd.DataFrame(ecartees, columns=["Fichier", "Motif"]),
-                     hide_index=True, width='stretch')
+    # Déplié d'emblée : replié, le canal de saisie ne serait pas trouvé, et une
+    # photo écartée passerait pour définitivement perdue.
+    with st.expander(f"⚠️ {len(ecartees)} photo(s) écartée(s) — position saisissable",
+                     expanded=True):
+        panneau_ecartees()
 
 # --------------------------------------------------------------------------
 # Vérification photo par photo
@@ -714,7 +845,9 @@ tableau_corrige = st.data_editor(
             "Position", help="Latitude, longitude en degrés décimaux."),
         "Source pos.": st.column_config.TextColumn(
             "Source pos.", width="small",
-            help="EXIF = métadonnées de la photo ; OCR = texte incrusté dans l'image."),
+            help="EXIF = métadonnées de la photo ; OCR = texte incrusté dans "
+                 "l'image ; Saisie = position donnée à la main, faute des deux "
+                 "autres. La carte signale ce dernier cas au lecteur."),
         "Précision (m)": st.column_config.TextColumn(
             "Précision (m)", width="small",
             help="Incertitude annoncée par l'appareil (GPSHPositioningError). "

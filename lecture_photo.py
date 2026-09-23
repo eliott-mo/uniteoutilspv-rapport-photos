@@ -12,6 +12,11 @@ CASCADE DE POSITION (ordre impératif)
 Dans les deux premiers cas, la position doit passer le garde-fou géographique
 (France métropolitaine) : une coordonnée hors bornes est rejetée, jamais placée.
 
+Une photo écartée n'est pas perdue pour autant : le chargé de projet peut lui
+donner sa position dans l'application, et `lire_photo_positionnee` la relit
+alors sans cascade de position — source « Saisie ». Le garde-fou géographique
+s'applique là aussi, en amont, chez l'appelant.
+
 CASCADE DE CAP
   1. cap EXIF (GPSImgDirection), écrit par les iPhone et Open Camera → « EXIF » ;
   2. sinon, cône bleu de la vignette GPS Map Camera                  → « Vignette » ;
@@ -32,6 +37,11 @@ from lecture_exif import lire_metadonnees
 from ocr_position import lire_position_ocr, position_valide
 
 SANS_CAP = "—"
+
+# Provenance d'une position donnée à la main, par opposition à « EXIF » et
+# « OCR » qui, eux, ont été mesurés. La distinction voyage jusque dans la carte :
+# un lecteur du rapport doit pouvoir savoir qu'une position a été déclarée.
+SOURCE_SAISIE = "Saisie"
 
 
 def _chemin_lisible_par_opencv(chemin_image):
@@ -143,4 +153,37 @@ def lire_photo(chemin_image):
     if resultat["cap"] is None:
         resultat["message"] = message_cap
 
+    return resultat
+
+
+def lire_photo_positionnee(chemin_image, lat, lon):
+    """Lit une photo dont la position est DONNÉE, et non détectée.
+
+    Même enregistrement que `lire_photo`, à ceci près que la cascade de position
+    est court-circuitée : la position vient de la saisie du chargé de projet,
+    d'où la source « Saisie ». À lui de l'avoir validée (garde-fou France) avant
+    d'appeler.
+
+    LA CASCADE DE CAP, ELLE, EST BIEN JOUÉE — et c'est tout l'intérêt de passer
+    par ici plutôt que de recoller une position sur un enregistrement écarté.
+    Elle ne l'avait jamais été : quand la position manque, `lire_photo` rend la
+    main avant d'y arriver. Or une photo repêchée a très bien pu être écartée
+    parce que l'OCR n'a pas su relire le bandeau, alors que la vignette GPS Map
+    Camera y est — avec son cône — ou que le cap EXIF est renseigné. La
+    direction vient donc gratuitement, sans que personne ait à la saisir.
+    """
+    meta = lire_metadonnees(chemin_image)
+    resultat = {
+        "lat": lat, "lon": lon, "source_position": SOURCE_SAISIE,
+        "format_position": None, "precision_m": None,
+        "cap": None, "confiance": None, "source_cap": SANS_CAP,
+        "date": meta["date"], "message": "",
+    }
+    # Pas de precision_m : l'incertitude EXIF décrit une fixation GPS, et il n'y
+    # en a pas eu. Une position saisie ne prétend pas non plus à une précision
+    # connue — la mention « ± n m » serait une invention.
+    (resultat["cap"], resultat["confiance"],
+     resultat["source_cap"], message_cap) = _lire_cap(chemin_image, meta["cap_exif"])
+    if resultat["cap"] is None:
+        resultat["message"] = message_cap
     return resultat

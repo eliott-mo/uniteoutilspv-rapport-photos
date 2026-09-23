@@ -14,7 +14,7 @@ version : sans cette mention, rien ne permettait de dire si une carte reçue
 connaît ou non la dernière évolution — la recharger en mode « Compléter » la
 régénère avec la version courante.
 
-CARTE ÉDITABLE (format v5)
+CARTE ÉDITABLE (format v6)
 --------------------------
 La page s'ouvre en consultation. Le bouton ✏️ en haut bascule en mode édition ;
 le crayon ✎ présent sur chaque photo (liste et bulle) y bascule aussi, en
@@ -59,7 +59,7 @@ FORMAT DU BLOC `#donnees-carte` (lu au réimport)
 C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
 
     {
-      "version": 5,                  entier, suit <meta name="carte-photos-version">
+      "version": 6,                  entier, suit <meta name="carte-photos-version">
       "titre": "Visite de site",     titre de la carte, éditable dans la page
       "note": "",                    note libre ; les cartes version 2 y portaient
                                      la mention de calibration, désormais déduite
@@ -91,6 +91,9 @@ C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
           "masque": false,           true = en corbeille (absent de la carte)
           "ordre": 0,                rang d'affichage, modifiable par ↑ / ↓
           "precision_m": 4260.8,     incertitude GPS annoncée, ou null si inconnue
+          "source_position":         d'où vient lat_brut/lon_brut : "EXIF", "OCR",
+            "EXIF",                  "Saisie" (donnée à la main), ou null pour une
+                                     carte antérieure au format 6
           "image": "/9j/4AAQ..."     photo en base64 (JPEG), sans en-tête data:
         }
       ]
@@ -152,6 +155,23 @@ réécrit en clair — `innerHTML` resérialise les entités en caractères. C'e
 sans conséquence : la carte s'affiche pareil, et une régénération côté Python
 repart de ce gabarit-ci.
 
+POSITION SAISIE À LA MAIN
+-------------------------
+Une photo sans position exploitable est écartée — mais le chargé de projet peut
+lui donner la sienne dans l'application, quand il sait où elle a été prise. Le
+point entre alors sur la carte avec `source_position = "Saisie"`.
+
+La position saisie est rangée dans `lat_brut`/`lon_brut`, et non dans les champs
+manuels : elle EST l'origine de cette photo, puisqu'il n'y en a pas d'autre. Le
+replacement au clic (`lat_manuel`) reste donc disponible par-dessus, avec son
+retour à l'origine — c'est-à-dire à la valeur saisie.
+
+`source_position` voyage pour que la carte puisse le dire. Une position déclarée
+n'est pas une position mesurée : le lecteur du rapport doit pouvoir faire la
+différence, au même titre qu'on lui signale une direction corrigée ou une photo
+repositionnée. La mention figure sur la vignette, dans la bulle, et dans la note
+du panneau.
+
 EMPRISE DU SITE
 ---------------
 Le périmètre du projet, importé d'un zip de shapefile par `emprise_site.py`,
@@ -190,7 +210,7 @@ from lecture_exif import SEUIL_PRECISION_M
 
 # Version du format de fichier. À incrémenter si la structure du bloc
 # #donnees-carte change, pour que le réimport sache à quoi il a affaire.
-VERSION_CARTE = 5
+VERSION_CARTE = 6
 
 # Version de l'outil qui produit la carte, en année.mois de mise en service,
 # suivie d'une lettre quand le mois en compte plusieurs : 2026.09, puis
@@ -208,7 +228,7 @@ VERSION_CARTE = 5
 # une carte diffusée reste figée à la version qui l'a produite, et rien d'autre
 # dans le fichier ne le disait. À changer à chaque mise en production apportant
 # une différence visible pour l'utilisateur.
-VERSION_OUTIL = "2026.09.b"
+VERSION_OUTIL = "2026.09.c"
 
 # Fonds de carte. L'ortho IGN est la plus détaillée sur la France ;
 # Esri sert de secours et couvre le monde entier (utile en outre-mer).
@@ -387,6 +407,7 @@ def _point_depuis_photo(photo, identifiant, ordre, largeur_max, qualite):
         "masque": False,
         "ordre": ordre,
         "precision_m": photo.get("precision_m"),
+        "source_position": photo.get("source_position"),
         "image": _image_en_base64(photo["chemin"], largeur_max, qualite),
     }
 
@@ -533,6 +554,13 @@ def _migrer(donnees):
     if version < 5:
         donnees["emprise"] = None
 
+    # v5 -> v6 : le point dit d'ou vient sa position. Pour une carte anterieure
+    # l'information n'a pas ete conservee : null, et la carte n'affiche rien
+    # plutot que d'affirmer une provenance qu'elle ignore.
+    if version < 6:
+        for point in donnees["points"]:
+            point["source_position"] = None
+
     # Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
     # au mieux sans pretendre l'avoir convertie.
     if version < VERSION_CARTE:
@@ -541,6 +569,8 @@ def _migrer(donnees):
     if not isinstance(donnees.get("offset"), (int, float)):
         donnees["offset"] = 0
     donnees.setdefault("emprise", None)
+    for point in donnees["points"]:
+        point.setdefault("source_position", None)
     for point in donnees["points"]:
         point.setdefault("cap_brut", None)
         point.setdefault("cap_manuel", None)
@@ -1075,9 +1105,14 @@ function migrer(d) {
   // n'en ont evidemment aucune, et rien d'autre ne change pour elles.
   if (version < 5) d.emprise = null;
 
+  // v5 -> v6 : le point dit d'ou vient sa position. Pour une carte anterieure
+  // l'information n'a pas ete conservee : null, et la carte n'affiche rien
+  // plutot que d'affirmer une provenance qu'elle ignore.
+  if (version < 6) d.points.forEach(p => { p.source_position = null; });
+
   // Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
   // au mieux sans pretendre l'avoir convertie.
-  if (version < 5) d.version = 5;
+  if (version < 6) d.version = 6;
 
   if (typeof d.offset !== 'number') d.offset = 0;
   if (d.emprise === undefined) d.emprise = null;
@@ -1088,6 +1123,7 @@ function migrer(d) {
     if (p.lon_brut === undefined)   p.lon_brut = p.lon;
     if (p.lat_manuel === undefined) p.lat_manuel = null;
     if (p.lon_manuel === undefined) p.lon_manuel = null;
+    if (p.source_position === undefined) p.source_position = null;
     // `lat`/`lon` sont deduites : on les remet d'aplomb au cas ou un fichier
     // edite a la main les aurait laissees en desaccord avec la regle.
     const pos = positionEffective(p);
@@ -1120,6 +1156,12 @@ function positionEffective(p) {
 }
 
 function repositionnee(p) { return defini(p.lat_manuel) && defini(p.lon_manuel); }
+
+/* Position donnee a la main dans l'application, faute d'EXIF et de bandeau
+   lisible. A ne pas confondre avec repositionnee() : ici rien n'a ete deplace,
+   c'est l'origine elle-meme qui a ete declaree. Une carte anterieure au format
+   6 ne porte pas l'information et n'affiche donc rien. */
+function positionSaisie(p) { return p.source_position === 'Saisie'; }
 
 /* Cap à suivre pour aller d'un point à un autre (orthodromie). Sert à déduire
    une direction d'un clic sur la carte. */
@@ -1533,7 +1575,7 @@ function contenuPopup(p, numero, groupe) {
   // les laisserait absentes des bulles créées avant le passage en édition.
   return `${navigation}<img class="popup-photo" src="${srcImage(p)}" data-ouvrir="${numero - 1}">
      <div class="popup-titre">${numero}. ${echapper(p.nom)}</div>
-     <div class="popup-meta">${p.date ? echapper(p.date) + '<br>' : ''}${texteCap(capEffectif(p))}</div>
+     <div class="popup-meta">${p.date ? echapper(p.date) + '<br>' : ''}${texteCap(capEffectif(p))}${positionSaisie(p) ? '<br>position saisie \u2014 non mesur\u00e9e' : ''}</div>
      ${commentaire}${alerte}
      <div class="popup-actions">
        <button type="button" data-action="modifier" data-id="${p.id}" title="Renommer / commenter">\u270e</button>
@@ -1591,6 +1633,13 @@ function noteCalibration() {
   if (replacees) {
     morceaux.push(replacees + ' photo(s) repositionnée(s) à la main.');
   }
+  // Une position declaree n'est pas une position mesuree. Le dire importe au
+  // moins autant que de signaler un deplacement : ici, AUCUN appareil n'a
+  // localise la photo.
+  const saisies = pointsVisibles().filter(positionSaisie).length;
+  if (saisies) {
+    morceaux.push(saisies + ' position(s) saisie(s) à la main, sans mesure GPS.');
+  }
   return morceaux.join(' ');
 }
 
@@ -1640,7 +1689,7 @@ function rendreListe() {
       <img src="${srcImage(p)}" alt="">
       <div class="txt">
         <span class="nom">${i + 1}. ${echapper(p.nom)}</span>
-        <span class="meta">${texteCap(capEffectif(p))}${defini(p.cap_manuel) ? ' · fixée à la main' : ''}${repositionnee(p) ? ' · repositionnée' : ''}</span>
+        <span class="meta">${texteCap(capEffectif(p))}${defini(p.cap_manuel) ? ' · fixée à la main' : ''}${repositionnee(p) ? ' · repositionnée' : ''}${positionSaisie(p) ? ' · position saisie' : ''}</span>
         ${precisionDouteuse(p)
           ? `<span class="alerte" title="${echapper(texteAlerte(p))} \u2014 incertitude GPS annoncée par l'appareil">\u26a0\ufe0f ±${Math.round(p.precision_m)} m</span>`
           : ''}

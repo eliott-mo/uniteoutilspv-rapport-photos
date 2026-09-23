@@ -170,6 +170,55 @@ def interpreter_texte(texte):
 
 
 # --------------------------------------------------------------------------
+# Position SAISIE à la main
+# --------------------------------------------------------------------------
+
+# Un couple de nombres décimaux, tel qu'on le colle : « 48.123456, 2.345678 ».
+# La partie décimale est EXIGÉE des deux côtés — « 48, 2 » désignerait un degré
+# entier, soit une centaine de kilomètres, et serait plus sûrement une faute de
+# frappe qu'une position. La virgule décimale est acceptée : un CDP qui tape
+# lui-même écrit volontiers « 48,1234 ».
+_COUPLE_SAISI = re.compile(r"-?\d{1,3}[.,]\d+")
+
+
+def interpreter_saisie(texte):
+    """Interprète une position saisie à la main. Retourne (lat, lon) ou None.
+
+    PLUS PERMISSIF QUE `interpreter_texte`, et c'est délibéré : le couple brut
+    « 48.123456, 2.345678 » — exactement ce que copie Google Maps d'un clic
+    droit — est accepté ici, alors que l'OCR l'écarte. La différence tient au
+    contexte, pas au format. Dans un bandeau incrusté, deux nombres côte à côte
+    peuvent être l'altitude et la vitesse : d'où les étiquettes « Lat … Long … »
+    exigées là-bas. Une valeur tapée exprès dans la colonne Position, elle, ne
+    peut être qu'une coordonnée. Assouplir l'analyseur de l'OCR pour autant
+    rouvrirait la confusion sur toutes les photos du lot.
+
+    Les formes déjà connues passent d'abord : c'est le même presse-papier qui
+    sert, et « Lat 48.5089 Long 1.2323 » comme le DMS doivent marcher.
+
+    LE GARDE-FOU GÉOGRAPHIQUE N'EST PAS APPLIQUÉ ICI. L'appelant le fait, pour
+    pouvoir dire au chargé de projet laquelle des deux choses cloche : une
+    saisie incomprise n'est pas une saisie hors de France.
+    """
+    if not texte or not str(texte).strip():
+        return None
+
+    connu = interpreter_texte(texte)
+    if connu:
+        return connu[0], connu[1]
+
+    nombres = _COUPLE_SAISI.findall(str(texte))
+    if len(nombres) != 2:
+        # Il en faut exactement deux, et DÉCIMAUX : une altitude entière collée
+        # à la suite (« 48.1234, 2.3456, 120 ») ne compte donc pas et se laisse
+        # ignorer, tandis qu'une incertitude (« … (5.5 m) ») en ferait trois et
+        # rend la saisie ambiguë. Mieux vaut la refuser en le disant que deviner.
+        return None
+    latitude, longitude = (float(n.replace(",", ".")) for n in nombres)
+    return latitude, longitude
+
+
+# --------------------------------------------------------------------------
 # OCR
 # --------------------------------------------------------------------------
 

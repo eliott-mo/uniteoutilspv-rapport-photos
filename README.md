@@ -204,6 +204,32 @@ infobulle le nom de la couche d'origine. L'emprise **ne s'édite pas dans la
 page** : elle vient du SIG, c'est là qu'elle se corrige. Elle survit en revanche
 à tout enregistrement depuis le navigateur, comme au réimport.
 
+### Donner soi-même la position d'une photo
+
+Une photo est écartée quand **ni ses métadonnées ni le texte incrusté** ne
+donnent sa position — capture d'écran, photo recadrée, appareil sans GPS,
+bandeau illisible. Elle n'est pas perdue pour autant : le tableau des écartées
+porte une colonne **Position**, où le chargé de projet indique l'endroit quand
+il le connaît.
+
+Le plus simple est de coller le couple que produit Google Maps (clic droit sur
+le point, la première ligne du menu). Sont aussi acceptés « Lat … Long … » et
+les degrés-minutes-secondes. Le **garde-fou France métropolitaine s'applique
+comme partout ailleurs** : une coordonnée hors bornes est refusée, avec un
+rappel — l'erreur la plus fréquente est d'inverser latitude et longitude.
+
+La **direction**, elle, n'est pas à saisir : elle est relue automatiquement au
+moment du repêchage. Elle ne l'avait jamais été, la lecture s'arrêtant faute de
+position ; or une photo peut très bien porter un cap EXIF ou une vignette GPS
+Map Camera et n'avoir été écartée que parce que l'OCR n'a pas su relire son
+bandeau. Elle s'ajuste ensuite dans la carte, comme les autres.
+
+La position saisie devient l'**origine** de la photo (`lat_brut`), puisqu'il n'y
+en a pas d'autre : le replacement au clic reste donc disponible par-dessus, et
+« rendre à la position d'origine » ramène à la valeur saisie. La carte signale
+le cas au lecteur — vignette, bulle et note du panneau : une position déclarée
+n'est pas une position mesurée.
+
 ## Position et direction : deux cascades
 
 **Position** (`lecture_photo.lire_photo`)
@@ -212,7 +238,9 @@ page** : elle vient du SIG, c'est là qu'elle se corrige. Elle survit en revanch
 2. Sinon, **texte incrusté dans l'image** lu par OCR → source « OCR ».
    Certaines applications iPhone (bandeau « Work Progress ») n'écrivent pas
    l'EXIF : les coordonnées ne figurent que dans le bandeau.
-3. Sinon, photo écartée avec le motif « position introuvable ».
+3. Sinon, photo écartée avec le motif « position introuvable » — **et sa
+   position peut alors être saisie à la main** (voir ci-dessus), source
+   « Saisie ».
 
 Un **garde-fou géographique** s'applique aux deux sources : seule une position en
 France métropolitaine (41 ≤ lat ≤ 51,6 et −5,5 ≤ lon ≤ 9,8) est acceptée. Une
@@ -318,7 +346,7 @@ Le fichier réenregistré depuis le navigateur reste tout aussi autonome :
 `documentComplet()` relit les blocs Leaflet depuis la page et les réémet, comme
 il le fait déjà pour la feuille de style et le script de la carte.
 
-## Carte éditable (format version 5)
+## Carte éditable (format version 6)
 
 La carte s'ouvre en consultation. Le bouton **✏️** du panneau active le mode
 édition, où l'on peut, sans aucun outil ni serveur :
@@ -379,7 +407,7 @@ l'a produite et **reste figée à cette version**. Rafraîchir le navigateur n'y
 change rien, et rien ne distinguait à l'œil une carte de l'an dernier d'une
 carte du jour — de quoi croire qu'une nouveauté « n'apparaît pas chez soi ».
 
-Le pied du panneau porte donc la mention `Rapport photos 2026.09.b · format v5` :
+Le pied du panneau porte donc la mention `Rapport photos 2026.09.c · format v6` :
 version de l'outil, puis version du format. La même information figure dans
 l'en-tête, `<meta name="carte-photos-outil">`, pour un contrôle sans ouvrir la
 carte. Une carte ancienne se met à jour en la rechargeant dans l'outil (mode
