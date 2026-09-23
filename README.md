@@ -214,7 +214,14 @@ il le connaît.
 
 Le plus simple est de coller le couple que produit Google Maps (clic droit sur
 le point, la première ligne du menu). Sont aussi acceptés « Lat … Long … » et
-les degrés-minutes-secondes. Le **garde-fou France métropolitaine s'applique
+les degrés-minutes-secondes.
+
+Une photo est écartée pour **deux raisons très différentes**, que le tableau
+présente pourtant côte à côte : ou bien sa position manque — c'est le cas qui se
+rattrape — ou bien le fichier lui-même est abîmé, et aucune position n'y changera
+rien. La saisie est donc refusée sur un fichier que Pillow ne sait pas ouvrir
+(`formats_images.image_lisible`) : sans ce contrôle, il entrerait dans le lot
+pour n'échouer qu'à la génération, après tout le travail de vérification. Le **garde-fou France métropolitaine s'applique
 comme partout ailleurs** : une coordonnée hors bornes est refusée, avec un
 rappel — l'erreur la plus fréquente est d'inverser latitude et longitude.
 

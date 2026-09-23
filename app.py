@@ -434,6 +434,13 @@ def panneau_ecartees():
         texte = "" if pd.isna(valeur) else str(valeur).strip()
         if not texte:
             continue
+        if not formats_images.image_lisible(ecartees[rang]["chemin"]):
+            refus.append(
+                f"**{ligne['Fichier']}** — ce fichier n'est pas une image "
+                "lisible. Ce n'est pas sa position qui manque : il est abîmé, "
+                "ou ce n'est pas une photo. Redéposez-le depuis sa source."
+            )
+            continue
         couple = interpreter_saisie(texte)
         if couple is None:
             refus.append(
