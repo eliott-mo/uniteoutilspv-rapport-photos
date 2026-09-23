@@ -617,6 +617,13 @@ le bloc JSON. Mesuré sur 40 photos : pic de 78 à 26 Mo, et la chaîne de 52 Mo
 n'est plus recréée à chaque interaction. `extraire_donnees()` et
 `completer_carte()` acceptent les deux formes.
 
+**`SEUIL_LOT_MO` reste à 350 Mo, délibérément.** C'est le poste suivant si
+l'hébergement coupe à nouveau : les octets déposés vivent en RAM avant d'être
+écrits sur disque, et l'abaisser réduirait le pic — au prix d'un découpage plus
+fréquent pour l'utilisateur. Ne pas le faire par précaution : les quatre
+correctifs ci-dessus ont tous été guidés par une mesure, celui-ci attend son
+dépassement.
+
 ## Structure
 
 | Fichier | Rôle |
