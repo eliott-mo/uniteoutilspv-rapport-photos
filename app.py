@@ -31,6 +31,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image, ImageOps
 
+import export_photomontage
 import formats_images
 import ocr_position
 from detection_cap import SEUIL_CONFIANCE
@@ -187,6 +188,7 @@ def analyser(chemins, barre_progression):
             "lat": lecture["lat"],
             "lon": lecture["lon"],
             "source_position": lecture["source_position"],
+            "optique": lecture["optique"],
             "precision_m": lecture["precision_m"],
             "cap_brut": lecture["cap"],
             "confiance": lecture["confiance"],
@@ -341,6 +343,12 @@ def traiter(fichiers_a_traiter, remplacer):
     st.rerun()          # repart sur un affichage propre (compteur remis à zéro)
 
 
+def nom_de_fichier(titre):
+    """Titre ramené à ce qu'un système de fichiers accepte."""
+    propre = "".join(c if c.isalnum() or c in " -_" else "_" for c in titre).strip()
+    return propre or "carte"
+
+
 def photo_repechee(ecartee, lat, lon):
     """Bâtit l'enregistrement d'une photo dont la position vient d'être saisie.
 
@@ -354,6 +362,7 @@ def photo_repechee(ecartee, lat, lon):
         "lat": lecture["lat"],
         "lon": lecture["lon"],
         "source_position": lecture["source_position"],
+        "optique": lecture["optique"],
         "precision_m": lecture["precision_m"],
         "cap_brut": lecture["cap"],
         "confiance": lecture["confiance"],
@@ -470,6 +479,79 @@ def panneau_ecartees():
         if st.button(f"➕ Ajouter {len(retenues)} photo(s) au lot",
                      type="primary", width='stretch', key="ajouter_repechees"):
             repecher(retenues)
+
+
+# --------------------------------------------------------------------------
+# Export des vues de photomontage
+# --------------------------------------------------------------------------
+# Le choix des vues, le descriptif et l'archive vivent dans
+# export_photomontage.py ; il ne reste ici que ce qui se voit à l'écran.
+
+@st.cache_data(show_spinner=False, max_entries=2)
+def archive_photomontage(chemins, texte_descriptif):
+    """Zip mémorisé : le tableau se réaffiche à chaque interaction, et relire
+    les originaux à chaque fois serait payé pour rien. Deux entrées suffisent —
+    l'export courant, et celui d'avant si un réglage a bougé puis est revenu."""
+    return export_photomontage.construire_archive(chemins, texte_descriptif)
+
+
+def panneau_photomontage(photos, donnees_existantes, titre):
+    """Bloc d'export des vues de photomontage."""
+    vues = export_photomontage.vues_a_exporter(photos, donnees_existantes)
+
+    st.markdown("**Export pour photomontage** — facultatif")
+    if not vues:
+        st.caption(
+            "Aucune vue marquée. Pour en exporter une, écrivez "
+            "**photomontage** dans son commentaire, au tableau ci-dessus — le "
+            "pluriel et la casse sont sans importance. L'export livre alors le "
+            "**fichier d'origine intact**, EXIF compris, avec sa position et "
+            "son cap : c'est ce dont part un photomontage, et la carte seule "
+            "ne peut pas le fournir (ses photos y sont réduites à 1280 px et "
+            "dépouillées de leurs métadonnées)."
+        )
+        return
+
+    descriptif = export_photomontage.descriptif(
+        vues, titre, donnees_existantes,
+        outil=VERSION_OUTIL, format_carte=VERSION_CARTE)
+
+    chemins = tuple(photo["chemin"] for photo, _ in vues)
+    octets = archive_photomontage(chemins, descriptif)
+
+    sans_focale = [photo["nom"] for photo, _ in vues
+                   if not (photo.get("optique") or {}).get("focale_eq35_mm")]
+    repris = sum(1 for _, point in vues if point is not None)
+
+    detail = ", ".join(photo["nom"] for photo, _ in vues)
+    st.success(f"**{len(vues)} vue(s) marquée(s)** : {detail}.")
+    if repris:
+        st.caption(f"{repris} vue(s) reconnue(s) au marquage de la carte importée, "
+                   "avec la position et le cap qu'elle porte — replacements à la "
+                   "main et calibration de boussole compris.")
+    if sans_focale:
+        # Dit avant le téléchargement, pas découvert en aval : sans focale,
+        # le photomontage doit la résoudre en même temps que la pose de
+        # l'appareil, et les deux sont dégénérées.
+        st.warning(
+            "Aucune focale dans l'EXIF de : **" + "**, **".join(sans_focale) +
+            "**. Le photomontage devra la deviner, au prix d'allers-retours. "
+            "Si ces vues existent ailleurs en version non retouchée, mieux vaut "
+            "redéposer ces fichiers-là."
+        )
+
+    st.download_button(
+        f"⬇️ Télécharger {len(vues)} vue(s) d'origine (.zip)",
+        data=octets,
+        file_name=f"{nom_de_fichier(titre)} - photomontage.zip",
+        mime="application/zip",
+        width='stretch',
+    )
+    st.caption(
+        f"Environ **{len(octets) / 1e6:.1f} Mo** — les fichiers d'origine, "
+        "intacts, accompagnés d'un `photomontage.json` qui donne pour chacun "
+        "sa position, son cap et son optique."
+    )
 
 
 # Quelques aperçus suffisent : un seul est affiché à la fois, les autres ne
@@ -1087,12 +1169,11 @@ if st.button(bouton, key="generer", width='stretch',
             html = construire_carte(photos, titre, largeur_max, qualite,
                                     emprise=emprise)
 
-    nom_fichier = "".join(c if c.isalnum() or c in " -_" else "_" for c in titre).strip()
     st.session_state["carte"] = {
         # Encodée une fois pour toutes : st.download_button veut des octets, les
         # reproduire à chaque rerun rehacherait tout le fichier pour rien.
         "octets": html.encode("utf-8"),
-        "nom_fichier": f"{nom_fichier or 'carte'}.html",
+        "nom_fichier": f"{nom_de_fichier(titre)}.html",
         "complement": bool(html_existant),
         "signature": signature,
     }
@@ -1126,3 +1207,6 @@ if carte_prete:
         "la régénérer. Elle est remplacée dès que vous changez un réglage "
         "ci-dessus, pour ne jamais télécharger une carte périmée."
     )
+
+st.divider()
+panneau_photomontage(photos, donnees_existantes, titre)

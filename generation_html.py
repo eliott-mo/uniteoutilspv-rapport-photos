@@ -14,7 +14,7 @@ version : sans cette mention, rien ne permettait de dire si une carte reçue
 connaît ou non la dernière évolution — la recharger en mode « Compléter » la
 régénère avec la version courante.
 
-CARTE ÉDITABLE (format v6)
+CARTE ÉDITABLE (format v7)
 --------------------------
 La page s'ouvre en consultation. Le bouton ✏️ en haut bascule en mode édition ;
 le crayon ✎ présent sur chaque photo (liste et bulle) y bascule aussi, en
@@ -59,7 +59,7 @@ FORMAT DU BLOC `#donnees-carte` (lu au réimport)
 C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
 
     {
-      "version": 6,                  entier, suit <meta name="carte-photos-version">
+      "version": 7,                  entier, suit <meta name="carte-photos-version">
       "titre": "Visite de site",     titre de la carte, éditable dans la page
       "note": "",                    note libre ; les cartes version 2 y portaient
                                      la mention de calibration, désormais déduite
@@ -94,6 +94,16 @@ C'est ce bloc qui fait foi, pas le DOM. Objet JSON :
           "source_position":         d'où vient lat_brut/lon_brut : "EXIF", "OCR",
             "EXIF",                  "Saisie" (donnée à la main), ou null pour une
                                      carte antérieure au format 6
+          "focale_eq35_mm": 26.0,    équivalent 35 mm (EXIF), ou null si absent
+          "focale_mm": 5.1,          focale réelle (EXIF), ou null si absent
+          "largeur_px": 4032,        dimensions du fichier D'ORIGINE, redressées
+          "hauteur_px": 3024,        (rotation EXIF appliquée), ou null
+          "orientation": 1,          valeur EXIF brute, pour revenir au fichier
+          "digital_zoom": 1.22,      DigitalZoomRatio, ou null
+          "appareil": "Apple iPhone X",  Make + Model, ou null
+          "vignette_gps_map_camera": false,   cliché GPS Map Camera
+                                     Ces huit champs valent null/false sur une
+                                     carte antérieure au format 7.
           "image": "/9j/4AAQ..."     photo en base64 (JPEG), sans en-tête data:
         }
       ]
@@ -155,6 +165,33 @@ réécrit en clair — `innerHTML` resérialise les entités en caractères. C'e
 sans conséquence : la carte s'affiche pareil, et une régénération côté Python
 repart de ce gabarit-ci.
 
+OPTIQUE — CE QUI SERT AU PHOTOMONTAGE
+-------------------------------------
+La carte est le seul endroit où vivent la position replacée à la main et le cap
+calibré d'une prise de vue : plus justes que l'EXIF brut, ils sont exactement ce
+dont part un photomontage. Il lui manquait l'optique, qui n'était lue nulle part.
+
+Le calcul en aval est `f_px = f35 × diagonale_px / 43,267`. La diagonale à
+employer est celle du FICHIER D'ORIGINE, d'où `largeur_px`/`hauteur_px` : la
+vignette encodée ici est réduite à 1280 px et donnerait une focale fausse d'un
+facteur 3. Ces dimensions sont redressées — rotation EXIF appliquée, donc
+l'orientation sous laquelle l'image se voit — et `orientation` transporte la
+valeur brute pour qui veut revenir au fichier. La diagonale, elle, est la même
+dans les deux conventions.
+
+`null` veut dire « cherché et non trouvé », jamais « inconnu par défaut » :
+beaucoup de clichés n'ont pas d'équivalent 35 mm, et l'aval sait le gérer à
+condition que la distinction lui parvienne.
+
+`vignette_gps_map_camera` se lit d'abord dans la signature que l'application
+inscrit au modèle EXIF, et n'est confirmé par l'image que si un cône a été
+mesuré. Le seul repérage du marqueur ne suffit pas : d'autres applications
+incrustent une vignette carte et le déclenchent (voir lecture_photo._lire_cap).
+
+Attention à ne pas en faire la règle de recadrage : un cliché GPS Map Camera
+sort en 4:3 plein capteur. C'est le RAPPORT des dimensions qui dit si le fichier
+est recadré, quelle que soit l'application.
+
 POSITION SAISIE À LA MAIN
 -------------------------
 Une photo sans position exploitable est écartée — mais le chargé de projet peut
@@ -206,11 +243,11 @@ import os
 import warnings
 from PIL import Image, ImageOps
 
-from lecture_exif import SEUIL_PRECISION_M
+from lecture_exif import OPTIQUE_INCONNUE, SEUIL_PRECISION_M
 
 # Version du format de fichier. À incrémenter si la structure du bloc
 # #donnees-carte change, pour que le réimport sache à quoi il a affaire.
-VERSION_CARTE = 6
+VERSION_CARTE = 7
 
 # Version de l'outil qui produit la carte, en année.mois de mise en service,
 # suivie d'une lettre quand le mois en compte plusieurs : 2026.09, puis
@@ -228,7 +265,7 @@ VERSION_CARTE = 6
 # une carte diffusée reste figée à la version qui l'a produite, et rien d'autre
 # dans le fichier ne le disait. À changer à chaque mise en production apportant
 # une différence visible pour l'utilisateur.
-VERSION_OUTIL = "2026.09.c"
+VERSION_OUTIL = "2026.09.d"
 
 # Fonds de carte. L'ortho IGN est la plus détaillée sur la France ;
 # Esri sert de secours et couvre le monde entier (utile en outre-mer).
@@ -408,6 +445,10 @@ def _point_depuis_photo(photo, identifiant, ordre, largeur_max, qualite):
         "ordre": ordre,
         "precision_m": photo.get("precision_m"),
         "source_position": photo.get("source_position"),
+        # Aplatie dans le point plutôt que rangée dans un sous-objet : c'est le
+        # contrat convenu avec l'aval, et chaque champ s'y lit comme
+        # `precision_m`, à côté de ce qu'il décrit.
+        **(photo.get("optique") or OPTIQUE_INCONNUE),
         "image": _image_en_base64(photo["chemin"], largeur_max, qualite),
     }
 
@@ -561,6 +602,14 @@ def _migrer(donnees):
         for point in donnees["points"]:
             point["source_position"] = None
 
+    # v6 -> v7 : le point porte son optique. Une carte anterieure a ete produite
+    # sans que l'EXIF soit lu, et sa vignette ne permet pas de le reconstituer :
+    # tout vaut null. C'est exactement ce que l'aval doit savoir pour redemander
+    # une regeneration plutot que calculer sur du vide.
+    if version < 7:
+        for point in donnees["points"]:
+            point.update(OPTIQUE_INCONNUE)
+
     # Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
     # au mieux sans pretendre l'avoir convertie.
     if version < VERSION_CARTE:
@@ -571,6 +620,8 @@ def _migrer(donnees):
     donnees.setdefault("emprise", None)
     for point in donnees["points"]:
         point.setdefault("source_position", None)
+        for champ, defaut in OPTIQUE_INCONNUE.items():
+            point.setdefault(champ, defaut)
     for point in donnees["points"]:
         point.setdefault("cap_brut", None)
         point.setdefault("cap_manuel", None)
@@ -1110,9 +1161,19 @@ function migrer(d) {
   // plutot que d'affirmer une provenance qu'elle ignore.
   if (version < 6) d.points.forEach(p => { p.source_position = null; });
 
+  // v6 -> v7 : le point porte son optique (focale, dimensions d'origine,
+  // appareil). Une carte anterieure a ete produite sans que l'EXIF soit lu :
+  // tout vaut null, et rien dans sa vignette ne permet de le reconstituer.
+  if (version < 7) d.points.forEach(p => {
+    p.focale_eq35_mm = null; p.focale_mm = null;
+    p.largeur_px = null; p.hauteur_px = null; p.orientation = null;
+    p.digital_zoom = null; p.appareil = null;
+    p.vignette_gps_map_camera = false;
+  });
+
   // Une version PLUS RECENTE que la notre est laissee telle quelle : on la lit
   // au mieux sans pretendre l'avoir convertie.
-  if (version < 6) d.version = 6;
+  if (version < 7) d.version = 7;
 
   if (typeof d.offset !== 'number') d.offset = 0;
   if (d.emprise === undefined) d.emprise = null;

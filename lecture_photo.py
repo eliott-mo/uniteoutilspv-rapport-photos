@@ -33,7 +33,7 @@ from PIL import Image, ImageOps
 
 import formats_images
 from detection_cap import detecter_cap
-from lecture_exif import lire_metadonnees
+from lecture_exif import OPTIQUE_INCONNUE, lire_metadonnees
 from ocr_position import lire_position_ocr, position_valide
 
 SANS_CAP = "—"
@@ -75,11 +75,24 @@ def _chemin_lisible_par_opencv(chemin_image):
 
 
 def _lire_cap(chemin_image, cap_exif):
-    """Applique la cascade de cap. Retourne (cap, confiance, source, message)."""
+    """Applique la cascade de cap. Retourne (cap, confiance, source, message, vignette).
+
+    `vignette` n'est vrai que si un CÔNE a réellement été mesuré, et pas au
+    simple repérage du marqueur. Le repérage seul produit des faux positifs :
+    d'autres applications incrustent aussi une vignette carte — celle d'un
+    iPhone du lot de test, avec son épingle rouge, le déclenche sans être du
+    GPS Map Camera. Pour le cap cela reste sans conséquence (aucun cône
+    exploitable n'en sort), mais en faire un identifiant d'application serait
+    faux. Le cône bleu, lui, est propre à cette application.
+
+    Le drapeau vaut aussi False quand le cap EXIF a suffi : la détection n'est
+    alors même pas tentée. D'où la signature EXIF de l'application, que
+    l'appelant lit de son côté — seul repère disponible dans tous les cas.
+    """
     # 1. Le cap EXIF vient directement de la boussole : plus fiable que l'analyse
     #    d'image, qui passe par le rendu de la vignette.
     if cap_exif is not None:
-        return cap_exif, 1.0, "EXIF", ""
+        return cap_exif, 1.0, "EXIF", "", False
 
     # 2. Repli sur le cône bleu de la vignette GPS Map Camera.
     chemin, temporaire = _chemin_lisible_par_opencv(chemin_image)
@@ -90,10 +103,11 @@ def _lire_cap(chemin_image, cap_exif):
             os.remove(chemin)
 
     if detection["cap"] is not None:
-        return detection["cap"], detection["confiance"], "Vignette", ""
+        return (detection["cap"], detection["confiance"], "Vignette", "",
+                detection.get("marqueur", True))
 
     # 3. Pas de cône (drone, bandeau sans boussole) : simple absence de cap.
-    return None, None, SANS_CAP, detection["message"]
+    return None, None, SANS_CAP, detection["message"], False
 
 
 def lire_photo(chemin_image):
@@ -109,15 +123,17 @@ def lire_photo(chemin_image):
         source_cap       : « EXIF », « Vignette » ou « — »
         date             : datetime de prise de vue, ou None
         message          : motif du rejet, ou explication de l'absence de cap
+        optique          : focale, dimensions d'origine, appareil (cf. lecture_exif)
     """
     resultat = {
         "lat": None, "lon": None, "source_position": None, "format_position": None,
         "precision_m": None, "cap": None, "confiance": None, "source_cap": SANS_CAP,
-        "date": None, "message": "",
+        "date": None, "message": "", "optique": dict(OPTIQUE_INCONNUE),
     }
 
     meta = lire_metadonnees(chemin_image)
     resultat["date"] = meta["date"]
+    resultat["optique"] = meta["optique"]
 
     # --- Cascade de position ---------------------------------------------
     if position_valide(meta["lat"], meta["lon"]):
@@ -148,10 +164,16 @@ def lire_photo(chemin_image):
             return resultat
 
     # --- Cascade de cap ---------------------------------------------------
-    (resultat["cap"], resultat["confiance"],
-     resultat["source_cap"], message_cap) = _lire_cap(chemin_image, meta["cap_exif"])
+    (resultat["cap"], resultat["confiance"], resultat["source_cap"],
+     message_cap, vignette) = _lire_cap(chemin_image, meta["cap_exif"])
     if resultat["cap"] is None:
         resultat["message"] = message_cap
+    # Deux repères pour une même question, et il faut les deux : la signature
+    # EXIF survit à tout mais disparaît si les métadonnées ont été effacées ; la
+    # détection voit la vignette dans les pixels mais n'est pas tentée quand un
+    # cap EXIF a déjà répondu.
+    if vignette:
+        resultat["optique"]["vignette_gps_map_camera"] = True
 
     return resultat
 
@@ -177,13 +199,15 @@ def lire_photo_positionnee(chemin_image, lat, lon):
         "lat": lat, "lon": lon, "source_position": SOURCE_SAISIE,
         "format_position": None, "precision_m": None,
         "cap": None, "confiance": None, "source_cap": SANS_CAP,
-        "date": meta["date"], "message": "",
+        "date": meta["date"], "message": "", "optique": meta["optique"],
     }
     # Pas de precision_m : l'incertitude EXIF décrit une fixation GPS, et il n'y
     # en a pas eu. Une position saisie ne prétend pas non plus à une précision
     # connue — la mention « ± n m » serait une invention.
-    (resultat["cap"], resultat["confiance"],
-     resultat["source_cap"], message_cap) = _lire_cap(chemin_image, meta["cap_exif"])
+    (resultat["cap"], resultat["confiance"], resultat["source_cap"],
+     message_cap, vignette) = _lire_cap(chemin_image, meta["cap_exif"])
     if resultat["cap"] is None:
         resultat["message"] = message_cap
+    if vignette:
+        resultat["optique"]["vignette_gps_map_camera"] = True
     return resultat

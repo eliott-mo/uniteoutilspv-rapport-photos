@@ -237,6 +237,71 @@ en a pas d'autre : le replacement au clic reste donc disponible par-dessus, et
 le cas au lecteur — vignette, bulle et note du panneau : une position déclarée
 n'est pas une position mesurée.
 
+## Livrer de quoi caler un photomontage
+
+La carte est **le seul endroit** où vivent la position replacée à la main et le
+cap calibré d'une prise de vue. C'est plus juste que l'EXIF brut du téléphone, et
+c'est exactement ce dont part un photomontage — qui a besoin, en plus, de deux
+choses que la carte ne pouvait pas donner.
+
+### L'optique, dans le bloc de données (format 7)
+
+Le calcul en aval est `f_px = f35 × diagonale_px / 43,267`. Sans focale déclarée,
+elle doit être **résolue en même temps que la pose de l'appareil**, or les deux
+sont dégénérées : quelques pour cent d'erreur de focale valent une centaine de
+mètres de recul. D'où les allers-retours de validation que ces champs suppriment.
+
+Chaque point porte donc `focale_eq35_mm`, `focale_mm`, `largeur_px`,
+`hauteur_px`, `orientation`, `digital_zoom`, `appareil` et
+`vignette_gps_map_camera`. Trois choses à savoir :
+
+- **Les dimensions sont celles du FICHIER D'ORIGINE**, jamais celles de la
+  vignette encodée dans la carte — réduite à 1280 px, elle donnerait une focale
+  fausse d'un facteur 3. Elles sont **redressées** (rotation EXIF appliquée,
+  donc l'orientation sous laquelle l'image se voit) ; `orientation` transporte
+  la valeur brute pour qui veut revenir au fichier. La diagonale, elle, est la
+  même dans les deux conventions.
+- **`null` veut dire « cherché et non trouvé »**, jamais « inconnu par défaut ».
+  Beaucoup de clichés n'ont pas d'équivalent 35 mm. Une carte antérieure au
+  format 7 a les huit champs à `null`/`false` : elle a été produite sans que
+  l'EXIF soit lu, et sa vignette ne permet pas de le reconstituer — il faut la
+  régénérer depuis les photos.
+- L'optique est lue **avant** les sorties anticipées de la cascade GPS : une
+  photo non géolocalisée, repêchée par saisie de position, arrive donc sur la
+  carte avec sa focale.
+
+⚠️ **Un cliché GPS Map Camera sort en 4:3 plein capteur** — contrairement à une
+idée reçue. Sur le lot de test, le fichier en 9:16 est un iPhone, et il porte la
+vignette d'une **autre** application. C'est le **rapport des dimensions** qui dit
+si un fichier est recadré, jamais le nom de l'application : appliquer la formule
+à la diagonale d'un recadrage se trompe de 9 % (mesuré). `vignette_gps_map_camera`
+est une information, pas une règle de recadrage.
+
+Ce drapeau se lit d'abord dans la signature que l'application inscrit au modèle
+EXIF (`… :: Captured by - GPS Map Camera`), et n'est confirmé par l'image que si
+un **cône** a été mesuré. Le seul repérage du marqueur ne suffit pas : d'autres
+applications incrustent une vignette carte et le déclenchent.
+
+### L'export des fichiers d'origine
+
+La carte ne porte que des vignettes, sans métadonnées. Un bouton distinct — sous
+la génération — livre un `.zip` des **fichiers d'origine intacts**, EXIF compris,
+plus un `photomontage.json` donnant pour chacun sa position, son cap, sa source
+de position et son optique.
+
+Il ne prend **que les vues marquées**, celles dont le commentaire contient
+*photomontage* — présence, sans égard à la casse ni au pluriel : relevé sur les
+projets réels, le mot s'écrit au singulier comme au pluriel. Une visite entière à
+pleine résolution n'aurait pas de sens sur l'hébergement, et ne servirait à
+personne : il y a une ou deux vues à monter pour cinq à quarante clichés.
+
+Le marquage est reconnu **des deux côtés** : la colonne *Commentaire* de
+l'application, et la carte déposée en mode *Compléter* — car en pratique le
+marquage se fait dans l'éditeur HTML, donc après le passage dans l'application.
+Quand la vue vient d'une carte, ce sont **sa** position et **son** cap qui
+partent dans le descriptif : replacement à la main et calibration de boussole
+compris, puisque c'est précisément ce que l'aval vient chercher.
+
 ## Position et direction : deux cascades
 
 **Position** (`lecture_photo.lire_photo`)
@@ -353,7 +418,7 @@ Le fichier réenregistré depuis le navigateur reste tout aussi autonome :
 `documentComplet()` relit les blocs Leaflet depuis la page et les réémet, comme
 il le fait déjà pour la feuille de style et le script de la carte.
 
-## Carte éditable (format version 6)
+## Carte éditable (format version 7)
 
 La carte s'ouvre en consultation. Le bouton **✏️** du panneau active le mode
 édition, où l'on peut, sans aucun outil ni serveur :
@@ -414,7 +479,7 @@ l'a produite et **reste figée à cette version**. Rafraîchir le navigateur n'y
 change rien, et rien ne distinguait à l'œil une carte de l'an dernier d'une
 carte du jour — de quoi croire qu'une nouveauté « n'apparaît pas chez soi ».
 
-Le pied du panneau porte donc la mention `Rapport photos 2026.09.c · format v6` :
+Le pied du panneau porte donc la mention `Rapport photos 2026.09.d · format v7` :
 version de l'outil, puis version du format. La même information figure dans
 l'en-tête, `<meta name="carte-photos-outil">`, pour un contrôle sans ouvrir la
 carte. Une carte ancienne se met à jour en la rechargeant dans l'outil (mode
@@ -637,6 +702,7 @@ dépassement.
 | `apercu_boussole.py` | Rose des vents (image Pillow) affichée pendant la calibration |
 | `emprise_site.py` | Lecture du zip de shapefile et conversion Lambert-93 → WGS84 (sans dépendance géospatiale) |
 | `generation_html.py` | Construction de la carte Leaflet, et relecture/complétion d'une carte existante (réimport) |
+| `export_photomontage.py` | Choix des vues à monter, descriptif et archive des fichiers d'origine |
 
 ## Réglages utiles
 

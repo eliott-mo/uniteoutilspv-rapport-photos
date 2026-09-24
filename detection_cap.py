@@ -107,8 +107,15 @@ def detecter_cap(chemin_image):
         confiance  : concentration angulaire de 0 à 1, ou None
         fiable     : True si confiance >= SEUIL_CONFIANCE
         message    : explication en clair si la détection a échoué
+        marqueur   : True si le marqueur Google de la vignette a été trouvé
+
+    `marqueur` se distingue de `cap` : la vignette peut être là, boussole
+    désactivée, donc sans cône à mesurer. L'aval photomontage a besoin de savoir
+    que le cliché vient de GPS Map Camera même quand aucune direction n'en sort.
     """
-    echec = lambda msg: {"cap": None, "confiance": None, "fiable": False, "message": msg}
+    echec = lambda msg, marqueur=False: {"cap": None, "confiance": None,
+                                         "fiable": False, "message": msg,
+                                         "marqueur": marqueur}
 
     image = cv2.imread(str(chemin_image))
     if image is None:
@@ -133,7 +140,7 @@ def detecter_cap(chemin_image):
 
     ys, xs = np.nonzero(_masque_bleu(hsv))
     if len(xs) == 0:
-        return echec("Aucun pixel bleu (boussole désactivée ?)")
+        return echec("Aucun pixel bleu (boussole désactivée ?)", marqueur=True)
 
     # On ne garde que les pixels bleus proches du marqueur : au-delà, le masque
     # sortirait de la vignette et capterait des éléments de la photo elle-même.
@@ -143,7 +150,7 @@ def detecter_cap(chemin_image):
     # Un cône représente typiquement plusieurs fois l'aire du marqueur.
     # En dessous de 10 % on considère qu'il n'y a pas de cône exploitable.
     if len(xs) < 0.10 * aire:
-        return echec("Cône de direction absent (boussole désactivée ?)")
+        return echec("Cône de direction absent (boussole désactivée ?)", marqueur=True)
 
     # Angle de chaque pixel : 0° au nord (haut de l'image), sens horaire.
     angles = np.arctan2(xs - ax, -(ys - ay))
@@ -161,4 +168,5 @@ def detecter_cap(chemin_image):
         "confiance": round(confiance, 2),
         "fiable": confiance >= SEUIL_CONFIANCE,
         "message": "",
+        "marqueur": True,
     }
